@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 #: Compounds the dry model covers.
 DRY_COMPOUNDS = ("SOFT", "MEDIUM", "HARD")
 
+#: Floor applied to a degradation rate before simulating, in s/lap.
+#: Circuits with no measurable degradation produce slopes scattered either
+#: side of zero, and the measured value is reported unchanged. But a tyre does
+#: not get faster with age, and a negative rate fed into the simulator would
+#: make ever-longer stints look better without bound. A small positive floor
+#: encodes "no measurable degradation" without inverting the physics.
+MIN_SIMULATED_DEG_RATE = 0.002
+
 #: Typical pace offset by compound in seconds per lap, relative to the softest
 #: available tyre. Derived from the observed spread between compounds rather
 #: than assumed; overridden per circuit when enough data exists.

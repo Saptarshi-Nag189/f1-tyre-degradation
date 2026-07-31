@@ -116,8 +116,9 @@ def build_dataset(years: list[int] | None = None,
     stints = target_mod.build_stint_table(
         laps, min_r=tgt["linregress_min_r"], min_laps=tgt["min_stint_laps"],
         energy_col=energy_col,
-        exclude_negative=tgt.get("exclude_negative_slopes", False),
-        max_deg_rate=tgt.get("max_plausible_deg_rate"))
+        min_deg_rate=tgt.get("min_plausible_deg_rate"),
+        max_deg_rate=tgt.get("max_plausible_deg_rate"),
+        max_stderr=tgt.get("max_slope_stderr"))
 
     if not stints.empty:
         stints = attach_track_traits(stints, track_cfg)

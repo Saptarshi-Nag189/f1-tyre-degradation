@@ -58,7 +58,13 @@ def test_export_payload_shape():
         for compound, values in circuit["compounds"].items():
             assert COMPOUND_KEYS <= set(values), f"{slug}/{compound} missing keys"
             assert values["source"] in {"observed", "model"}
-            assert values["degRate"] > 0, "degradation must be positive"
+            # Not "> 0". A circuit with no measurable degradation, Monaco
+            # being the standing example, produces slopes scattered either
+            # side of zero, and the export reports the measured value rather
+            # than truncating it upward. The physical lower bound is enforced
+            # upstream and the simulator floors the value it acts on.
+            assert values["degRate"] >= -0.05, "beyond the physical bound"
+            assert values["q25"] <= values["q75"], "spread must be ordered"
 
     meta = payload["meta"]
     for key in ("trainSeasons", "holdoutSeason", "holdoutMAE", "units", "caveat"):

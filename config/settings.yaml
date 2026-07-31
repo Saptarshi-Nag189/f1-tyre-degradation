@@ -65,23 +65,52 @@ target:
   spearman_downweight_low: 0.2    # 0.2-0.4 -> laptime weight 0.7
   energy_weight_full: 0.5
   laptime_weight_downweight: 0.7
-  linregress_min_r: 0.3           # keep stint slope only if |r| > 0.3
+  # Stint acceptance is by the PRECISION of the slope estimate, not by the
+  # strength of the correlation.
+  #
+  # The compass design filters on |r| >= 0.3. Measured against the collected
+  # data, that is a slope-magnitude filter wearing a fit-quality costume:
+  #   corr(|r|, |slope|) = +0.53   but   corr(|r|, stderr) = -0.20
+  # and its pass rate runs from 29.5% for near-zero slopes to 98.7% for large
+  # ones. A genuinely flat stint has low correlation by construction, however
+  # well it is measured.
+  #
+  # The damage is concentrated exactly where it matters most for strategy.
+  # Monaco stints are measured MORE precisely than average (median slope
+  # stderr 0.0062 against 0.0152 elsewhere) yet were being discarded for
+  # being flat, which is the one thing everyone already knows about Monaco.
+  #
+  # A standard error of 0.02 s/lap is small against a typical degradation of
+  # ~0.065 s/lap, so surviving stints have their rate pinned well enough to
+  # separate a high-degradation circuit from a low one. That is the purpose
+  # the threshold serves, stated independently of what it does to any metric.
+  max_slope_stderr: 0.02          # s/lap; precision of the fitted slope
+  linregress_min_r: 0.0           # retained for the config contract; the
+                                  # precision criterion supersedes it
   min_stint_laps: 5               # need enough clean laps to fit a slope
 
   # Physical plausibility bounds on the fitted slope. A stint whose corrected
-  # lap time *falls* with tyre age is measuring track evolution (rubbering in,
-  # a drying line) rather than tyre recovery, which does not happen. Retaining
-  # such stints labels a track-condition effect as degradation.
+  # lap time falls substantially with tyre age is measuring track evolution
+  # (rubbering in, a drying line) rather than tyre recovery, which does not
+  # happen. Retaining such stints labels a track-condition effect as degradation.
   #
-  # Measured effect of applying these bounds: cross-season per-circuit
-  # correlation rises from 0.18 to 0.43, so the contamination was masking real
-  # transferable signal rather than merely adding noise.
+  # The lower bound is NOT zero. A circuit with genuinely no measurable
+  # degradation produces small slopes scattered either side of zero, and
+  # truncating at zero would keep only the positive half of that noise and
+  # bias the estimate upward - precisely at the circuits where a strategist
+  # most needs to know that degradation is negligible. Monaco's true median
+  # slope is -0.008 s/lap, so a zero bound deleted it entirely.
   #
-  # These are exclusions on physical grounds, decided by reasoning about what
-  # the quantity means. Note that any filter touching the target risks a
-  # selection effect, so both bounds are logged with counts and the retention
-  # is reported at Gate 2.
-  exclude_negative_slopes: true
+  # -0.05 s/lap is about one second of improvement across a 20-lap stint,
+  # which track evolution can plausibly produce; beyond that it is not tyre
+  # behaviour at all. The observed extreme was -1.07 s/lap.
+  #
+  # Measured effect of the bounds: cross-season per-circuit correlation rises
+  # from 0.18 to 0.43. The contamination was masking transferable signal
+  # rather than merely adding noise. Any filter touching the target risks a
+  # selection effect, so both bounds log their counts and Gate 2 reports the
+  # resulting retention.
+  min_plausible_deg_rate: -0.05   # s/lap; below this is track evolution
   max_plausible_deg_rate: 0.3     # s/lap; beyond this is a data artefact
 
 modelling:

@@ -148,7 +148,11 @@ class F1Pipeline:
 
         def lookup(compound: str):
             entry = deg_table[compound]
-            return entry["deg_rate"], entry["base_offset"], entry["source"]
+            # The measured rate is reported unchanged in the response; only the
+            # simulated one is floored, because a tyre does not get faster with
+            # age and an unbounded negative rate would reward infinite stints.
+            return (max(entry["deg_rate"], strat.MIN_SIMULATED_DEG_RATE),
+                    entry["base_offset"], entry["source"])
 
         # --- simulate ---
         settings = self.config

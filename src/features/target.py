@@ -114,21 +114,30 @@ class StintResult:
 
     deg_rate: float          # slope, seconds per lap of tyre life
     r_value: float
+    stderr: float            # standard error of the slope, s/lap
     n_laps: int
     energy_proxy: float
     intercept: float         # corrected pace at zero tyre life, seconds
 
 
 def stint_degradation(stint: pd.DataFrame, min_r: float, min_laps: int,
-                      energy_col: str | None = None) -> StintResult | None:
+                      energy_col: str | None = None,
+                      max_stderr: float | None = None) -> StintResult | None:
     """Fit the corrected-lap-time slope against TyreLife for one stint.
+
+    Acceptance is by the precision of the slope estimate (``max_stderr``)
+    rather than the strength of the correlation. A genuinely flat stint has
+    low ``|r|`` however well it is measured, so an ``|r|`` threshold silently
+    discards low-degradation circuits: measured on this data its pass rate
+    runs from 29.5% for near-zero slopes to 98.7% for large ones.
 
     :param stint: all laps of one stint, with ``is_clean_lap`` and
         ``corrected_lap_s``.
-    :param min_r: minimum ``|r|`` to accept the slope.
+    :param min_r: minimum ``|r|``; 0.0 disables the legacy criterion.
     :param min_laps: minimum clean laps required.
     :param energy_col: column holding a per-lap energy aggregate; when None the
         telemetry-free speed-trap proxy is used instead.
+    :param max_stderr: maximum acceptable standard error of the slope, s/lap.
     :returns: a StintResult, or None if the stint is unusable.
     """
     clean = stint[stint["is_clean_lap"]].copy()
@@ -151,7 +160,10 @@ def stint_degradation(stint: pd.DataFrame, min_r: float, min_laps: int,
         return None
 
     reg = linregress(x, y)
-    if abs(reg.rvalue) < min_r:
+    if min_r and abs(reg.rvalue) < min_r:
+        return None
+    if max_stderr is not None and (
+            not np.isfinite(reg.stderr) or reg.stderr > max_stderr):
         return None
 
     if energy_col and energy_col in clean.columns:
@@ -160,15 +172,16 @@ def stint_degradation(stint: pd.DataFrame, min_r: float, min_laps: int,
         energy = speed_trap_energy(clean)
 
     return StintResult(deg_rate=float(reg.slope), r_value=float(reg.rvalue),
-                       n_laps=int(len(x)), energy_proxy=energy,
-                       intercept=float(reg.intercept))
+                       stderr=float(reg.stderr), n_laps=int(len(x)),
+                       energy_proxy=energy, intercept=float(reg.intercept))
 
 
 def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
                       energy_col: str | None = None,
                       exclude_wet: bool = True,
-                      exclude_negative: bool = False,
-                      max_deg_rate: float | None = None) -> pd.DataFrame:
+                      min_deg_rate: float | None = None,
+                      max_deg_rate: float | None = None,
+                      max_stderr: float | None = None) -> pd.DataFrame:
     """Build the per-stint target table.
 
     :param laps: fully validated and fuel-corrected laps frame.
@@ -177,10 +190,12 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
     :param energy_col: per-lap energy aggregate column, or None for the
         telemetry-free proxy.
     :param exclude_wet: drop stints flagged wet (different physics).
-    :param exclude_negative: drop stints whose corrected pace improves with
-        tyre age, which measures track evolution rather than tyre wear.
+    :param min_deg_rate: drop slopes below this, in s/lap. Not zero: a circuit
+        with no measurable degradation scatters either side of zero, and
+        truncating at zero keeps only the positive half of that noise.
     :param max_deg_rate: drop implausibly steep slopes, in s/lap.
-    :returns: one row per stint with deg_rate, r_value, n_laps, energy_proxy.
+    :param max_stderr: maximum standard error of the fitted slope, s/lap.
+    :returns: one row per stint with deg_rate, r_value, stderr, n_laps.
     """
     frame = laps
     n_all = frame.groupby(STINT_GROUP).ngroups
@@ -190,14 +205,16 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
                     n_all - frame.groupby(STINT_GROUP).ngroups)
 
     rows: list[dict] = []
-    rejected = {"too_few_laps": 0, "low_r": 0}
+    rejected = {"too_few_laps": 0, "imprecise_slope": 0}
 
     for keys, stint in frame.groupby(STINT_GROUP, observed=True):
-        result = stint_degradation(stint, min_r, min_laps, energy_col)
+        result = stint_degradation(stint, min_r, min_laps, energy_col,
+                                   max_stderr=max_stderr)
         if result is None:
             # Distinguish the two rejection causes for the retention diagnostic.
             n_clean = int(stint["is_clean_lap"].sum())
-            rejected["too_few_laps" if n_clean < min_laps else "low_r"] += 1
+            rejected["too_few_laps" if n_clean < min_laps
+                     else "imprecise_slope"] += 1
             continue
         row = dict(zip(STINT_GROUP, keys))
         row.update(asdict(result))
@@ -221,11 +238,12 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
     # Physical plausibility bounds, applied after fitting so the counts of what
     # they remove are visible rather than silent.
     if not table.empty:
-        if exclude_negative:
-            n_negative = int((table["deg_rate"] < 0).sum())
-            table = table[table["deg_rate"] >= 0]
-            logger.info("  excluded %d stints with negative slopes "
-                        "(track evolution, not tyre recovery)", n_negative)
+        if min_deg_rate is not None:
+            n_low = int((table["deg_rate"] < min_deg_rate).sum())
+            table = table[table["deg_rate"] >= min_deg_rate]
+            logger.info("  excluded %d stints below %.3f s/lap "
+                        "(track evolution, not tyre recovery)",
+                        n_low, min_deg_rate)
         if max_deg_rate is not None:
             n_extreme = int((table["deg_rate"] > max_deg_rate).sum())
             table = table[table["deg_rate"] <= max_deg_rate]
@@ -236,8 +254,8 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
     retention = 100.0 * len(table) / max(n_all, 1)
     logger.info("Stint table: %d usable of %d raw stints (%.1f%% retention)",
                 len(table), n_all, retention)
-    logger.info("  rejected: %d too few clean laps, %d |r| below %.2f",
-                rejected["too_few_laps"], rejected["low_r"], min_r)
+    logger.info("  rejected: %d too few clean laps, %d slope too imprecise",
+                rejected["too_few_laps"], rejected["imprecise_slope"])
     if not table.empty:
         logger.info("  deg_rate: median %.4f s/lap, %.1f%% positive",
                     float(table["deg_rate"].median()),
@@ -346,6 +364,8 @@ def split_half_reliability(laps: pd.DataFrame, min_r: float,
         halves = []
         for offset in (0, 1):
             half = clean.iloc[offset::2]
+            # No precision filter here: the point is to measure how noisy the
+            # target is, so filtering on noise would beg the question.
             result = stint_degradation(half, min_r=0.0, min_laps=min_laps)
             halves.append(result.deg_rate if result else None)
         if halves[0] is not None and halves[1] is not None:

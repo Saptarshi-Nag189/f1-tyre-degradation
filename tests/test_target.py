@@ -70,6 +70,64 @@ def test_short_stint_rejected(degrading_stint):
         degrading_stint.head(3), min_r=0.3, min_laps=5) is None
 
 
+# --- acceptance by precision, not by correlation strength -------------------
+
+def _flat_stint(noise: float, n: int = 14, seed: int = 0) -> pd.DataFrame:
+    """A stint with no real degradation, plus lap-to-lap noise."""
+    rng = np.random.RandomState(seed)
+    return pd.DataFrame({
+        "is_clean_lap": [True] * n,
+        "TyreLife": np.arange(1, n + 1),
+        "corrected_lap_s": 90.0 + rng.normal(0, noise, n),
+    })
+
+
+def test_flat_but_precise_stint_is_kept():
+    """A genuinely flat stint has near-zero |r| however well it is measured.
+    Rejecting it discards exactly the low-degradation circuits a strategist
+    most needs, which is what removed Monaco from the dataset."""
+    stint = _flat_stint(noise=0.02)
+    assert target.stint_degradation(stint, min_r=0.0, min_laps=5,
+                                    max_stderr=0.02) is not None
+
+
+def test_correlation_filter_discards_flat_stints_the_precision_one_keeps():
+    """Documents the defect the precision criterion replaces.
+
+    The claim is statistical rather than about any single stint: across many
+    well-measured flat stints, an |r| threshold rejects most of them while a
+    precision threshold keeps them. Measured on the real data, the |r| >= 0.3
+    pass rate runs from 29.5% for near-zero slopes to 98.7% for large ones.
+    """
+    kept_by_r = kept_by_precision = 0
+    trials = 40
+    for seed in range(trials):
+        stint = _flat_stint(noise=0.02, seed=seed)
+        if target.stint_degradation(stint, min_r=0.3, min_laps=5) is not None:
+            kept_by_r += 1
+        if target.stint_degradation(stint, min_r=0.0, min_laps=5,
+                                    max_stderr=0.02) is not None:
+            kept_by_precision += 1
+
+    assert kept_by_precision == trials, "precision should keep every flat stint"
+    assert kept_by_r < trials * 0.6, (
+        f"|r| kept {kept_by_r}/{trials} flat stints; it is expected to discard "
+        "most of them, which is the bias being removed")
+
+
+def test_noisy_stint_is_rejected_on_precision():
+    """Large lap-to-lap scatter makes the slope unusable regardless of |r|."""
+    stint = _flat_stint(noise=3.0)
+    assert target.stint_degradation(stint, min_r=0.0, min_laps=5,
+                                    max_stderr=0.02) is None
+
+
+def test_stderr_is_reported(degrading_stint):
+    result = target.stint_degradation(degrading_stint, min_r=0.0, min_laps=5)
+    assert result is not None
+    assert result.stderr >= 0.0
+
+
 def test_constant_tyre_life_rejected():
     n = 10
     stint = pd.DataFrame({
