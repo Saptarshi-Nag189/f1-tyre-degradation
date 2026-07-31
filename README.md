@@ -11,19 +11,26 @@ pre-registered 15% gate.
 
 | Model | Holdout MAE (s/lap) | R² |
 |---|---|---|
-| Mean predictor | 0.04020 | −0.000 |
-| Linear baseline | 0.03994 | −0.053 |
-| **XGBoost (tuned)** | **0.03810** | **+0.047** |
+| Mean predictor | 0.03539 | — |
+| Linear baseline | 0.03337 | +0.044 |
+| **XGBoost (tuned)** | **0.03345** | **+0.097** |
 
-Trained on 2022-2023 (1,367 stints), held out on 2024 (734 stints).
-76.8% of predictions land within 0.05 s/lap.
+Trained on 2022-2023, held out on 2024. 74.4% of predictions land within
+0.05 s/lap.
 
-**Gate 4 fails at +4.6% against a 15% threshold.** That threshold was fixed
-before anyone measured the available headroom. The oracle ceiling — predicting
-each stint's own event-and-compound mean, which requires knowing the answer in
-advance — is 27.4%. The model captures 19% of that. Only 32.3% of degradation
-variance lies between events at all; the remaining 67.7% separates stints at
-the same race, where no event-level feature can reach.
+**Gate 4 fails, at −0.2% against a 15% threshold** — the tuned tree is level
+with the linear baseline rather than ahead of it. That is informative rather
+than merely disappointing: once the target's construction bias is removed, the
+relationship between circuit severity and degradation is close to linear, so
+gradient boosting's extra flexibility buys almost nothing. XGBoost does hold a
+better R² (+0.097 against +0.044), meaning it handles the tails better while
+matching on average error.
+
+The 15% threshold was fixed before anyone measured the available headroom. The
+oracle ceiling — predicting each stint's own event-and-compound mean, which
+requires knowing the answer in advance — is 38.0%. The model captures 14.4% of
+that. Just under half of degradation variance lies between events; the rest
+separates stints at the same race, where no event-level feature can reach.
 
 The per-circuit degradation estimates underneath the model are stronger than
 the model itself: they correlate 0.66-0.71 season to season. The strategy layer
@@ -33,13 +40,30 @@ gaps, recording which is which.
 ## What is not modelled
 
 - Wet and intermediate running. Those stints are excluded from the target fit.
-- The non-linear degradation cliff. Degradation is linear in tyre age here.
+- The non-linear degradation cliff. Degradation is linear in tyre age here, so
+  projections far beyond observed stint lengths are extrapolation and are
+  flagged as such.
 - Anything outside 2022-2024. Requests beyond it are flagged, not extrapolated.
-- **Low-degradation circuits are under-represented.** Monaco degrades so little
-  that its slope fits fall below the `|r| >= 0.3` quality filter and are
-  discarded, so its predictions come from the model and are flagged low
-  confidence. The simulator currently returns a two-stop for Monaco, which is
-  wrong.
+- Within-event variation. Roughly half the variance separates stints at the
+  same race — traffic, fuel saving, driver management — and none of it is
+  reachable from circuit-level features.
+
+## A bias worth knowing about
+
+Stints are accepted by the **precision** of the fitted slope, not by the
+strength of its correlation. The compass design filtered on `|r| >= 0.3`,
+which measures against this data as a slope-magnitude filter in disguise:
+
+```
+corr(|r|, |slope|) = +0.53      corr(|r|, stderr) = -0.20
+```
+
+Its pass rate ran from 29.5% for near-zero slopes to 98.7% for large ones, so
+it systematically deleted the low-degradation circuits. Monaco was the clearest
+casualty: its stints are measured *more* precisely than average (slope standard
+error 0.0062 against 0.0152) and were discarded for being flat. Replacing the
+criterion raised between-event variance from 32.3% to 49.7% and fixed every
+remaining directional error in the simulator.
 
 ## Pipeline
 
@@ -65,6 +89,9 @@ limit, and every subsequent run is free because cache hits bypass the limiter.
 - **Target reliability**: split-half 0.92 Pearson / 0.79 Spearman. The target
   is measured reliably; the difficulty is transferring across events, not
   measuring within them.
+- **Cross-season circuit stability**: 0.74 for 2022 vs 2023, 0.64 for 2023 vs
+  2024. Per-circuit degradation persists well enough that the strategy layer
+  prefers observed values over model predictions wherever they exist.
 - **LSTM**: not built. On a ~2,000-row per-stint tabular target there is no
   sequence axis left, and the gate would not be met.
 
