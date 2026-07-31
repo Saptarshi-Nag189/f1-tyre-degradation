@@ -1,0 +1,38 @@
+{
+  "target": "deg_rate",
+  "features": [
+    "TyreLife_start",
+    "compound_ordinal",
+    "compound_relative",
+    "AirTemp_mean",
+    "TrackTemp_mean",
+    "abrasion",
+    "energy",
+    "composite",
+    "RaceLaps",
+    "Team_Alfa Romeo",
+    "Team_AlphaTauri",
+    "Team_Alpine",
+    "Team_Aston Martin",
+    "Team_Ferrari",
+    "Team_Haas F1 Team",
+    "Team_McLaren",
+    "Team_Mercedes",
+    "Team_Red Bull Racing",
+    "Team_Williams"
+  ],
+  "cv_mae": 0.031856893842673734,
+  "params": {
+    "n_estimators": 57,
+    "max_depth": 5,
+    "learning_rate": 0.015343109118127217,
+    "subsample": 0.6789556194357824,
+    "colsample_bytree": 0.9932943115595774,
+    "reg_lambda": 14.122558097142651,
+    "reg_alpha": 0.07730783835442043,
+    "min_child_weight": 1,
+    "gamma": 0.00012087138398193951,
+    "tree_method": "hist",
+    "random_state": 42
+  }
+}

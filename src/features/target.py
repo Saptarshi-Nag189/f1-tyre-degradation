@@ -221,7 +221,8 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
         first = stint.iloc[0]
         for col in ("EventName", "Compound", "compound_ordinal",
                     "compound_relative", "compound_category", "compound_known",
-                    "Team", "pit_lane_start", "weather_imputed", "RaceLaps"):
+                    "Team", "Driver", "pit_lane_start", "weather_imputed",
+                    "RaceLaps"):
             if col in stint.columns:
                 row[col] = first[col]
         for col in ("AirTemp", "TrackTemp"):
@@ -231,6 +232,19 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
         row["StintLength"] = int(len(stint))
         row["TyreLife_start"] = float(
             pd.to_numeric(stint["TyreLife"], errors="coerce").min())
+
+        # Stint context, all knowable when the stint is planned rather than
+        # after it has run. Later stints sit on a lighter car and a hotter,
+        # more rubbered track, and the observed means differ accordingly
+        # (stint 1 0.059 s/lap against stint 2 0.068).
+        row["stint_number"] = float(keys[STINT_GROUP.index("Stint")])
+        start_lap = float(pd.to_numeric(stint["LapNumber"], errors="coerce").min())
+        row["start_lap"] = start_lap
+        if "fuel_remaining_kg" in stint.columns:
+            row["fuel_at_start_kg"] = float(
+                pd.to_numeric(stint["fuel_remaining_kg"], errors="coerce").max())
+        row["race_fraction_at_start"] = (
+            start_lap / row["RaceLaps"] if row.get("RaceLaps") else float("nan"))
         rows.append(row)
 
     table = pd.DataFrame(rows)

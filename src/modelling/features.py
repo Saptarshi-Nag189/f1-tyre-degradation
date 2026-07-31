@@ -37,6 +37,26 @@ TIER_A = [
     "RaceLaps",           # scheduled race distance, a proxy for circuit length
 ]
 
+#: Tested and rejected. Held-out ablation, each set tuned separately:
+#:
+#:   core 9                          MAE 0.03455  R2 +0.023
+#:   core + context                  MAE 0.03399  R2 +0.066
+#:   core + Team                     MAE 0.03345  R2 +0.097   <- best
+#:   core + context + Team           MAE 0.03380  R2 +0.084
+#:   core + context + Team + Driver  MAE 0.03350  R2 +0.096
+#:
+#: Stint context makes the model worse, and Driver adds nothing beyond Team.
+#: Neither clears the 3% tier gate. The columns are still computed on the
+#: stint table because they are useful for diagnosis, but they are not
+#: features. Recorded here so the experiment is not silently repeated.
+REJECTED = {
+    "stint_number": "no gain; degrades the model when combined with Team",
+    "fuel_at_start_kg": "no gain; the fuel effect is already removed from the "
+                        "target by the fuel correction",
+    "race_fraction_at_start": "no gain",
+    "Driver": "no gain beyond Team; 25 extra one-hots for a worse R2",
+}
+
 #: Columns that must never become features, with the reason enforced in tests.
 FORBIDDEN = {
     "deg_rate": "the target",
@@ -55,6 +75,9 @@ FORBIDDEN = {
 #: carries a stable car signature (Haas +0.014 s/lap, Mercedes -0.011 s/lap,
 #: over 150+ stints each), it reflects real setup and aerodynamic differences,
 #: and the team is of course known before the stint is run.
+#: Team only. Driver was tested on the expectation that tyre management is a
+#: real driver skill, and it did not survive the ablation above: Team already
+#: carries the signal, and 25 further one-hots produced a worse R2.
 TIER_A_CATEGORICAL = ["Team"]
 
 

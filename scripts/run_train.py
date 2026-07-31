@@ -99,6 +99,11 @@ def main() -> int:
     base = baseline.train_baseline(train, holdout, feats, target)
 
     logger.info("--- XGBoost ---")
+    # Tuned parameters are persisted and reloaded by default. Without this, a
+    # plain run silently reverts to the untuned defaults, which on this target
+    # are markedly worse (holdout R2 -0.309 against +0.097) because the signal
+    # is weak enough that the default capacity overfits it.
+    tuned_path = config.CONFIG_DIR / "tuned_params.json"
     params = None
     if args.tune:
         from src.modelling import tuning
@@ -106,7 +111,18 @@ def main() -> int:
                             n_trials=model_cfg["optuna_trials"],
                             n_splits=n_splits)
         params = tuned["best_params"]
-        logger.info("Best CV MAE %.5f with %s", tuned["best_cv_mae"], params)
+        tuned_path.write_text(json.dumps(
+            {"target": target, "features": feats, "cv_mae": tuned["best_cv_mae"],
+             "params": params}, indent=2), encoding="utf-8")
+        logger.info("Best CV MAE %.5f; saved to %s", tuned["best_cv_mae"], tuned_path)
+    elif tuned_path.exists():
+        saved = json.loads(tuned_path.read_text(encoding="utf-8"))
+        if saved.get("features") == feats and saved.get("target") == target:
+            params = saved["params"]
+            logger.info("Reusing tuned parameters from %s", tuned_path.name)
+        else:
+            logger.warning("%s was tuned for a different feature set or target; "
+                           "ignoring it. Re-run with --tune.", tuned_path.name)
 
     xgb_result = xgb_model.train_xgb(train, holdout, feats, target, params)
 
