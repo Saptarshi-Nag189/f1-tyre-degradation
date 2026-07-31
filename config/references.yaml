@@ -1,5 +1,37 @@
 # Machine-readable citation index. Every design decision that rests on a
 # published result cites a key from this file in its module docstring.
+#
+# Which decision each reference actually supports:
+#
+#   persson_2001, archard_1953, rubber_wear_2025
+#       The physical warrant for an energy component in the wear target:
+#       friction is viscoelastic, and wear rate follows frictional work
+#       dissipated at the contact patch. Tested empirically at Gate 3 rather
+#       than assumed, and the data demoted it.
+#   savitzky_golay_1964, steinier_1972
+#       Differentiating noisy 10 Hz telemetry twice, in src/features/physics.py.
+#       Steinier corrects typographical errors in the original coefficient
+#       tables, which is why scipy's implementation is used rather than
+#       transcribed coefficients.
+#   pacejka_2012, bakker_1986, milliken_1995
+#       The Magic Formula, deliberately EXCLUDED from the critical path. Its
+#       coefficients are load-dependent and effectively unavailable for F1
+#       tyres, so any implementation would rest on fabricated numbers.
+#   chen_guestrin_2016, grinsztajn_2022
+#       Why gradient-boosted trees on a ~2,000-row per-stint tabular target,
+#       and why the LSTM gate was expected to close.
+#   bergmeir_2018, bergmeir_2012
+#       Why validation is chronological and grouped on whole events:
+#       standard k-fold leaks when observations are serially dependent.
+#   lundberg_lee_2017
+#       SHAP attribution, computed via XGBoost's exact TreeSHAP.
+#   hochreiter_1997, ljung_box_1978
+#       The conditional LSTM path and its residual-autocorrelation gate.
+#       Not built; see docs/FINDINGS.md section 7.
+#   sulsky_2025, state_space_2025
+#       Prior work on this exact problem, both using FastF1. Useful as a
+#       sanity check that the industry standard is simple linear degradation
+#       models, which is roughly what this project converged on.
 
 persson_2001: "Persson, B.N.J. (2001). Theory of rubber friction and contact mechanics. J. Chem. Phys. 115(8):3840-3861. DOI 10.1063/1.1388626"
 savitzky_golay_1964: "Savitzky, A. & Golay, M.J.E. (1964). Smoothing and Differentiation of Data by Simplified Least Squares Procedures. Anal. Chem. 36(8):1627-1639. DOI 10.1021/ac60214a047"
@@ -10,3 +42,12 @@ bergmeir_2018: "Bergmeir, C., Hyndman, R.J. & Koo, B. (2018). A note on the vali
 hochreiter_1997: "Hochreiter, S. & Schmidhuber, J. (1997). Long Short-Term Memory. Neural Computation 9(8):1735-1780. DOI 10.1162/neco.1997.9.8.1735"
 ljung_box_1978: "Ljung, G.M. & Box, G.E.P. (1978). On a Measure of Lack of Fit in Time Series Models. Biometrika 65(2):297-303. DOI 10.1093/biomet/65.2.297"
 archard_1953: "Archard, J.F. (1953). Contact and Rubbing of Flat Surfaces. J. Appl. Phys. 24(8):981-988"
+rubber_wear_2025: "Rubber Wear: History, Mechanisms, and Perspectives (2025). Tribology Letters, Springer. DOI 10.1007/s11249-025-02025-9"
+steinier_1972: "Steinier, J., Termonia, Y. & Deltour, J. (1972). Comments on Smoothing and Differentiation of Data by Simplified Least Square Procedure. Anal. Chem. 44(11):1906-1909"
+pacejka_2012: "Pacejka, H.B. (2012). Tire and Vehicle Dynamics, 3rd ed. Elsevier. (Magic Formula; load-dependent coefficients, low-speed singularity)"
+bakker_1986: "Bakker, E., Nyborg, L. & Pacejka, H.B. (1986). Tyre Modelling for Use in Vehicle Dynamics Studies. SAE Technical Paper 870421"
+milliken_1995: "Milliken, W.F. & Milliken, D.L. (1995). Race Car Vehicle Dynamics. SAE International. (Load transfer, slip angle, lateral force vs vertical load)"
+bergmeir_2012: "Bergmeir, C. & Benitez, J.M. (2012). On the use of cross-validation for time series predictor evaluation. Information Sciences 191:192-213"
+sulsky_2025: "Explainable Time Series Prediction of Tyre Energy in Formula One Race Strategy (2025). arXiv:2501.04067. (Mercedes-AMG PETRONAS; XGBoost and LSTM for tyre energy)"
+state_space_2025: "A State-Space Approach to Modeling Tire Degradation in Formula 1 Racing (2025). arXiv:2512.00640. (FastF1-based; fuel mass plus latent tyre pace; pit stops as state resets)"
+fia_2022_regs: "FIA 2022 Formula 1 Technical Regulations, Article 4.1 (minimum mass without fuel 798 kg; 110 kg fuel capacity; 18-inch wheels)"
