@@ -50,11 +50,54 @@ FORBIDDEN = {
 }
 
 
+#: Categorical Tier A features, one-hot encoded against training levels only.
+#: Team earns its place: within event and compound, the residual degradation
+#: carries a stable car signature (Haas +0.014 s/lap, Mercedes -0.011 s/lap,
+#: over 150+ stints each), it reflects real setup and aerodynamic differences,
+#: and the team is of course known before the stint is run.
+TIER_A_CATEGORICAL = ["Team"]
+
+
 def available(frame_columns) -> list[str]:
-    """Return the Tier A features present in a frame, preserving tier order.
+    """Return the numeric Tier A features present in a frame, in tier order.
 
     :param frame_columns: columns of the stint table.
     :returns: usable feature names.
     """
     present = set(frame_columns)
     return [f for f in TIER_A if f in present]
+
+
+def build_matrix(frame, numeric: list[str], categories: dict[str, list[str]]):
+    """Assemble a model matrix with categoricals one-hot encoded.
+
+    Category levels must come from the training split alone, so no holdout
+    information reaches the encoding.
+
+    :param frame: stint table slice.
+    :param numeric: numeric feature names.
+    :param categories: mapping of column to the training levels to encode.
+    :returns: (DataFrame of features, list of column names).
+    """
+    import pandas as pd
+
+    matrix = frame[numeric].copy()
+    for column, levels in categories.items():
+        if column not in frame.columns:
+            continue
+        for level in levels:
+            matrix[f"{column}_{level}"] = (frame[column] == level).astype(float)
+    return matrix, list(matrix.columns)
+
+
+def training_categories(train, columns: list[str] | None = None
+                        ) -> dict[str, list[str]]:
+    """Collect categorical levels observed in the training split.
+
+    :param train: training stint table.
+    :param columns: categorical columns; defaults to TIER_A_CATEGORICAL.
+    :returns: mapping of column to sorted levels.
+    """
+    columns = columns or TIER_A_CATEGORICAL
+    return {c: sorted(train[c].dropna().unique().tolist())
+            for c in columns if c in train.columns}

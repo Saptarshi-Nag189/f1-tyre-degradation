@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
                         help="deg_rate is in s/lap and is what the simulator uses")
     parser.add_argument("--tune", action="store_true",
                         help="run the Optuna search before the final fit")
+    parser.add_argument("--no-team", action="store_true",
+                        help="drop the Team one-hot encoding, for ablation")
     return parser.parse_args()
 
 
@@ -53,17 +55,30 @@ def main() -> int:
     logger.info("Loaded %d stints, seasons %s",
                 len(stints), sorted(stints["Year"].unique().tolist()))
 
+    # --- chronological split (before encoding, so levels come from train only) ---
+    train, holdout = splits.season_holdout(
+        stints, model_cfg["train_seasons"], model_cfg["holdout_season"])
+
     # --- features ---
-    feats = features.available(stints.columns)
-    logger.info("Tier A features (%d): %s", len(feats), feats)
-    leaked = [f for f in feats if f in features.FORBIDDEN]
+    numeric = features.available(stints.columns)
+    leaked = [f for f in numeric if f in features.FORBIDDEN]
     if leaked:
         logger.error("Forbidden columns present in the feature set: %s", leaked)
         return 1
 
-    # --- chronological split ---
-    train, holdout = splits.season_holdout(
-        stints, model_cfg["train_seasons"], model_cfg["holdout_season"])
+    categories = {} if args.no_team else features.training_categories(train)
+    train_x, feats = features.build_matrix(train, numeric, categories)
+    holdout_x, _ = features.build_matrix(holdout, numeric, categories)
+    train = pd.concat([train.reset_index(drop=True),
+                       train_x.reset_index(drop=True)[
+                           [c for c in feats if c not in train.columns]]], axis=1)
+    holdout = pd.concat([holdout.reset_index(drop=True),
+                         holdout_x.reset_index(drop=True)[
+                             [c for c in feats if c not in holdout.columns]]], axis=1)
+    logger.info("Features (%d numeric + %d encoded): %s",
+                len(numeric), len(feats) - len(numeric), numeric)
+    for column, levels in categories.items():
+        logger.info("  %s one-hot over %d training levels", column, len(levels))
 
     n_events = len(splits.event_order(train))
     n_splits = min(model_cfg["ts_splits"], max(2, n_events - 1))
@@ -108,11 +123,26 @@ def main() -> int:
     expected_compound = {"compound_ordinal", "compound_relative"}
     gate6 = expected.issubset(top8) and bool(expected_compound & top8)
 
-    # --- Gate 4 ---
+    # --- Gate 4, reported against the measured oracle ceiling ---
+    # The 15% threshold was fixed before anyone measured how much headroom
+    # exists. run_diagnostics.py establishes that predicting each stint's own
+    # event-and-compound mean - which requires knowing the answer in advance -
+    # beats the global mean by only ~26%. A raw percentage is therefore
+    # reported alongside the share of achievable headroom it represents.
     base_mae = base["metrics"]["MAE"]
     xgb_mae = xgb_result["metrics"]["MAE"]
+    mean_mae = mean_metrics["MAE"]
     improvement = 100.0 * (base_mae - xgb_mae) / base_mae
+    vs_mean = 100.0 * (mean_mae - xgb_mae) / mean_mae
     gate4 = improvement >= model_cfg["baseline_gate_pct"]
+
+    ceiling = None
+    ceiling_path = config.resolve_path("reports") / "diagnostics.json"
+    if ceiling_path.exists():
+        diagnostics = json.loads(ceiling_path.read_text(encoding="utf-8"))
+        oracle = diagnostics.get("oracle_ceiling", {})
+        if oracle:
+            ceiling = max(v["improvement_vs_global_mean_pct"] for v in oracle.values())
 
     logger.info("=" * 62)
     logger.info("Holdout season %d, %d stints", model_cfg["holdout_season"], len(holdout))
@@ -127,6 +157,12 @@ def main() -> int:
     logger.info("GATE 4  improvement over baseline %+.1f%% (need >= %.1f%%): %s",
                 improvement, model_cfg["baseline_gate_pct"],
                 "PASS" if gate4 else "FAIL")
+    logger.info("        improvement over the mean predictor: %+.1f%%", vs_mean)
+    if ceiling is not None:
+        logger.info("        oracle ceiling %.1f%% (needs the answer in advance)",
+                    ceiling)
+        logger.info("        achieved share of headroom: %+.1f%%",
+                    100.0 * vs_mean / ceiling)
     logger.info("GATE 6  TyreLife/TrackTemp/compound in SHAP top 8: %s",
                 "PASS" if gate6 else "FAIL")
 
@@ -149,6 +185,9 @@ def main() -> int:
                     "baseline": base["metrics"],
                     "xgboost": xgb_result["metrics"]},
         "improvement_pct": improvement,
+        "improvement_vs_mean_pct": vs_mean,
+        "oracle_ceiling_pct": ceiling,
+        "share_of_headroom_pct": (100.0 * vs_mean / ceiling) if ceiling else None,
         "gate4_pass": bool(gate4),
         "gate6_pass": bool(gate6),
         "shap_ranking": ranking,
