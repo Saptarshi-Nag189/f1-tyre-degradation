@@ -1,0 +1,58 @@
+# Pirelli C-compound nominations per event (Hard / Medium / Soft).
+# Sources: Pirelli press releases, formula1.com, racingnews365, f1technical.
+# Compounds are RELATIVE per weekend: "hard" is the hardest of the nominated
+# trio, so a C3 can be the hard tyre at Monaco and the soft at Silverstone.
+# ALWAYS use the C-ordinal as the model feature, never the hard/medium/soft label.
+#
+# Entries not confirmed from a primary source are marked UNK and MUST NOT be
+# guessed. An UNK lookup returns None and the caller flags it; it never falls
+# back to a fabricated value.
+
+encoding: {C0: 0, C1: 1, C2: 2, C3: 3, C4: 4, C5: 5}
+
+# How FastF1 Compound strings are categorised. The old pipeline mapped every
+# unrecognised value to MEDIUM via fillna, silently corrupting the single most
+# important tyre categorical. Unknown values now route to their own category
+# and are counted, never coerced.
+slick_compounds: [SOFT, MEDIUM, HARD]
+wet_compounds: [INTERMEDIATE, WET]
+unknown_compounds: [UNKNOWN, TEST_UNKNOWN, NAN, ""]
+
+nominations:
+  2022:
+    Bahrain:        {hard: C1,  medium: C2,  soft: C3}   # three hardest
+    Saudi_Arabia:   {hard: UNK, medium: UNK, soft: UNK}
+    Australia:      {hard: UNK, medium: UNK, soft: UNK}
+    Emilia_Romagna: {hard: C2,  medium: C3,  soft: C4}
+    Miami:          {hard: C2,  medium: C3,  soft: C4}
+    Spain:          {hard: C1,  medium: C2,  soft: C3}   # harsh surface, hardest trio
+    Monaco:         {hard: C3,  medium: C4,  soft: C5}   # softest trio
+    France:         {hard: C2,  medium: C3,  soft: C4}
+    Hungary:        {hard: C2,  medium: C3,  soft: C4}
+    Belgium:        {hard: C2,  medium: C3,  soft: C4}
+    Netherlands:    {hard: C1,  medium: C2,  soft: C3}   # banked corners, hardest trio
+    Italy:          {hard: UNK, medium: UNK, soft: UNK}
+    # Remaining 2022 rounds: UNK unless later confirmed from Pirelli releases.
+
+  2023:
+    Bahrain:        {hard: C1,  medium: C2,  soft: C3}   # new-for-2023 C1
+    Saudi_Arabia:   {hard: C2,  medium: C3,  soft: C4}
+    Australia:      {hard: C2,  medium: C3,  soft: C4}
+    Monaco:         {hard: C3,  medium: C4,  soft: C5}
+    Spain:          {hard: C1,  medium: C2,  soft: C3}
+    Canada:         {hard: C3,  medium: C4,  soft: C5}
+    Austria:        {hard: C3,  medium: C4,  soft: C5}
+    Great_Britain:  {hard: C1,  medium: C2,  soft: C3}   # high lateral energy
+    Belgium:        {hard: C1,  medium: C3,  soft: C4}   # deliberate gap (skip C2)
+    # Remaining 2023 rounds: UNK unless confirmed.
+
+  2024:
+    Bahrain:        {hard: C1,  medium: C2,  soft: C3}
+    Saudi_Arabia:   {hard: C2,  medium: C3,  soft: C4}
+    Australia:      {hard: C3,  medium: C4,  soft: C5}   # step softer vs 2023
+    Japan:          {hard: C1,  medium: C2,  soft: C3}   # Suzuka, max lateral
+    Emilia_Romagna: {hard: C3,  medium: C4,  soft: C5}   # step softer than 2022
+    Monaco:         {hard: C3,  medium: C4,  soft: C5}
+    Canada:         {hard: C3,  medium: C4,  soft: C5}
+    Spain:          {hard: C1,  medium: C2,  soft: C3}
+    # Remaining 2024 rounds: UNK unless confirmed.

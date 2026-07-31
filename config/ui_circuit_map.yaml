@@ -1,0 +1,66 @@
+# Bridges the front-end's circuit slugs to the keys used elsewhere.
+#
+# user_ui/app.js keys circuits by lowercase slug; the modelling pipeline keys
+# events by RoundNumber, track_traits.yaml by country-style name, and
+# compound_mapping.yaml by a name that occasionally differs from the
+# track_traits one (Saudi_Arabia vs Jeddah).
+#
+# RoundNumber is deliberately NOT recorded here. It shifts between seasons,
+# so it is resolved at runtime from the collected data by matching event_name,
+# rather than hard-coded from memory.
+
+circuits:
+  silverstone:
+    event_name: "British Grand Prix"
+    track_traits_key: Great_Britain
+    compound_key: Great_Britain
+    ui_label: Silverstone
+  monza:
+    event_name: "Italian Grand Prix"
+    track_traits_key: Italy
+    compound_key: Italy
+    ui_label: Monza
+  spa:
+    event_name: "Belgian Grand Prix"
+    track_traits_key: Belgium
+    compound_key: Belgium
+    ui_label: Spa
+  monaco:
+    event_name: "Monaco Grand Prix"
+    track_traits_key: Monaco
+    compound_key: Monaco
+    ui_label: Monaco
+  suzuka:
+    event_name: "Japanese Grand Prix"
+    track_traits_key: Japan
+    compound_key: Japan
+    ui_label: Suzuka
+  singapore:
+    event_name: "Singapore Grand Prix"
+    track_traits_key: Singapore
+    compound_key: Singapore
+    ui_label: Marina Bay
+  bahrain:
+    event_name: "Bahrain Grand Prix"
+    track_traits_key: Bahrain
+    compound_key: Bahrain
+    ui_label: Bahrain
+  jeddah:
+    event_name: "Saudi Arabian Grand Prix"
+    track_traits_key: Jeddah
+    compound_key: Saudi_Arabia
+    ui_label: Jeddah
+  barcelona:
+    event_name: "Spanish Grand Prix"
+    track_traits_key: Spain
+    compound_key: Spain
+    ui_label: Barcelona
+  hungaroring:
+    event_name: "Hungarian Grand Prix"
+    track_traits_key: Hungary
+    compound_key: Hungary
+    ui_label: Hungaroring
+
+# The model is trained on the 2022-2024 ground-effect regulation era only.
+# Requests outside this range are refused rather than extrapolated.
+supported_seasons: [2022, 2023, 2024]

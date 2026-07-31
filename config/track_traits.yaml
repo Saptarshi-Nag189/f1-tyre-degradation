@@ -1,0 +1,86 @@
+# Track abrasiveness/severity classifications, 1 (low) to 3 (high).
+# Two DISTINCT axes: 'abrasion' (surface roughness/wear) and 'energy'
+# (lateral/vertical load). They diverge, and that divergence is the point:
+# Silverstone is high energy but low abrasion, Bahrain is high abrasion but
+# medium energy, Austria is high abrasion but low lateral. The single
+# composite 1-3 is a modelling convenience; prefer the separate axes.
+#
+# Ratings are era-dependent: Spa, Shanghai, Interlagos, COTA and Melbourne
+# were resurfaced within 2022-2024.
+#
+# Sources: Pirelli previews (press.pirelli.com), formula1.com, motorsport.com,
+# f1technical.net, pitpass.com. Pirelli's public 5/5 lateral/severity group:
+# Bahrain (abrasion), Silverstone, Suzuka, Barcelona, Spa, Zandvoort, Losail.
+
+circuits:
+  Bahrain:        {abrasion: 3, energy: 2, composite: 3, note: "5/5 abrasiveness, granite in asphalt; traction/braking led"}
+  Jeddah:         {abrasion: 1, energy: 2, composite: 2, note: "not very abrasive, average roughness; considerable lateral but below Suzuka/Barcelona"}
+  Australia:      {abrasion: 2, energy: 2, composite: 2, note: "2022 resurface, low grip 2/5, contained abrasion; overall stress 3/5"}
+  Emilia_Romagna: {abrasion: 1, energy: 2, composite: 2, note: "low-side severity, not as low as a street circuit"}
+  Miami:          {abrasion: 1, energy: 2, composite: 2, note: "very smooth asphalt; degradation primarily thermal"}
+  Spain:          {abrasion: 2, energy: 3, composite: 3, note: "toughest of year; fast long corners; thermal deg; 5/5 group"}
+  Monaco:         {abrasion: 1, energy: 1, composite: 1, note: "slippery street asphalt, almost no degradation, lowest energy"}
+  Azerbaijan:     {abrasion: 1, energy: 2, composite: 2, note: "low abrasion, contained lateral loads; high straight-line vertical load"}
+  Canada:         {abrasion: 1, energy: 2, composite: 2, note: "not particularly abrasive; heavy braking, high longitudinal forces"}
+  Great_Britain:  {abrasion: 1, energy: 3, composite: 3, note: "HIGH energy 5/5 lateral, >5g; surface medium-low abrasion"}
+  Austria:        {abrasion: 3, energy: 2, composite: 2, note: "old, high abrasiveness; low lateral; thermal deg dominates"}
+  France:         {abrasion: 2, energy: 2, composite: 2, note: "2022 calendar only; historically gritty/abrasive; low confidence"}
+  Hungary:        {abrasion: 2, energy: 1, composite: 2, note: "not particularly severe; overheating/traction limited"}
+  Belgium:        {abrasion: 2, energy: 3, composite: 3, note: "highest lateral energy loads; resurfaced -> lower abrasion"}
+  Netherlands:    {abrasion: 2, energy: 3, composite: 3, note: "banked T3/T14 high vertical+lateral load; hardest trio 2022-24; 5/5 group"}
+  Italy:          {abrasion: 1, energy: 2, composite: 2, note: "Monza; degradation usually low; braking/traction stability key"}
+  Singapore:      {abrasion: 1, energy: 2, composite: 2, note: "street; traction/braking dominant, low corner energy"}
+  Japan:          {abrasion: 2, energy: 3, composite: 3, note: "Suzuka; max lateral 5/5; low-med abrasion surface"}
+  United_States:  {abrasion: 2, energy: 2, composite: 2, note: "COTA; partial resurface 2023; lateral>longitudinal; thermal deg"}
+  Mexico:         {abrasion: 2, energy: 2, composite: 2, note: "altitude -> low downforce/energy; softest trio 2024"}
+  Brazil:         {abrasion: 2, energy: 2, composite: 2, note: "Interlagos; med-low forces both axles; 2024 resurface smoother"}
+  Las_Vegas:      {abrasion: 1, energy: 1, composite: 1, note: "low roughness, low corner severity; graining from cold not abrasion"}
+  Qatar:          {abrasion: 3, energy: 3, composite: 3, note: "Losail; abrasive surface + energy comparable to Suzuka/Silverstone; hardest trio; 5/5 group"}
+  Abu_Dhabi:      {abrasion: 2, energy: 2, composite: 2, note: "Yas Marina; low-med severity; softest trio"}
+  China:          {abrasion: 2, energy: 2, composite: 2, note: "Shanghai; 2024 resurface smoother/less abrasive but graining-prone"}
+
+# FastF1 EventName to config key. Explicit rather than derived, because the
+# mapping is not a string transform ("British Grand Prix" -> Great_Britain)
+# and because compound_mapping.yaml and this file disagree on one circuit
+# (Saudi Arabia is keyed Saudi_Arabia there and Jeddah here).
+# Covers every round on the 2022-2024 calendars.
+event_name_to_key:
+  "Bahrain Grand Prix":         {traits: Bahrain,        compound: Bahrain}
+  "Saudi Arabian Grand Prix":   {traits: Jeddah,         compound: Saudi_Arabia}
+  "Australian Grand Prix":      {traits: Australia,      compound: Australia}
+  "Emilia Romagna Grand Prix":  {traits: Emilia_Romagna, compound: Emilia_Romagna}
+  "Miami Grand Prix":           {traits: Miami,          compound: Miami}
+  "Spanish Grand Prix":         {traits: Spain,          compound: Spain}
+  "Monaco Grand Prix":          {traits: Monaco,         compound: Monaco}
+  "Azerbaijan Grand Prix":      {traits: Azerbaijan,     compound: Azerbaijan}
+  "Canadian Grand Prix":        {traits: Canada,         compound: Canada}
+  "British Grand Prix":         {traits: Great_Britain,  compound: Great_Britain}
+  "Austrian Grand Prix":        {traits: Austria,        compound: Austria}
+  "French Grand Prix":          {traits: France,         compound: France}
+  "Hungarian Grand Prix":       {traits: Hungary,        compound: Hungary}
+  "Belgian Grand Prix":         {traits: Belgium,        compound: Belgium}
+  "Dutch Grand Prix":           {traits: Netherlands,    compound: Netherlands}
+  "Italian Grand Prix":         {traits: Italy,          compound: Italy}
+  "Singapore Grand Prix":       {traits: Singapore,      compound: Singapore}
+  "Japanese Grand Prix":        {traits: Japan,          compound: Japan}
+  "United States Grand Prix":   {traits: United_States,  compound: United_States}
+  "Mexico City Grand Prix":     {traits: Mexico,         compound: Mexico}
+  "Mexican Grand Prix":         {traits: Mexico,         compound: Mexico}
+  "São Paulo Grand Prix":       {traits: Brazil,         compound: Brazil}
+  "Sao Paulo Grand Prix":       {traits: Brazil,         compound: Brazil}
+  "Brazilian Grand Prix":       {traits: Brazil,         compound: Brazil}
+  "Las Vegas Grand Prix":       {traits: Las_Vegas,      compound: Las_Vegas}
+  "Qatar Grand Prix":           {traits: Qatar,          compound: Qatar}
+  "Abu Dhabi Grand Prix":       {traits: Abu_Dhabi,      compound: Abu_Dhabi}
+  "Chinese Grand Prix":         {traits: China,          compound: China}
+
+climatological_defaults:
+  # Fallback AirTemp/TrackTemp (deg C) when weather data is missing. Every use
+  # sets weather_imputed = True so an invented value can never masquerade as
+  # a measured one.
+  Bahrain:       {air: 27, track: 33}
+  Qatar:         {air: 29, track: 34}
+  Singapore:     {air: 30, track: 34}
+  Las_Vegas:     {air: 16, track: 20}
+  Great_Britain: {air: 18, track: 28}
+  default:       {air: 22, track: 30}

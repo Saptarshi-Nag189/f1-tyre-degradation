@@ -1,0 +1,80 @@
+# Global configuration. All magic numbers live here.
+# Sources cited inline; see docs/compass_technical_document.md.
+
+project:
+  seasons: [2022, 2023, 2024]
+  session_type: "R"          # race sessions only
+  british_english: true
+
+collection:
+  # Measured by scripts/probe_api_cost.py on 2023 round 4:
+  #   11 requests per race with laps+weather only, +2 with telemetry,
+  #   0 on a repeat load (the cache fully bypasses the rate limiter).
+  # 46 races x 11 = 506 requests, marginally over the 500/hour limit, so
+  # collection runs one season per batch. 2022 is added last as a pure
+  # addition once the pipeline is proven end to end.
+  requests_per_session: 11
+  batch_order: [2023, 2024, 2022]
+  budget_per_hour: 500
+  budget_soft_limit: 450     # start sleeping here, leaving headroom
+  min_request_interval_s: 0.25
+
+paths:
+  fastf1_cache: "./cache/fastf1"    # deliberately outside data/ so that
+                                    # clearing data/ cannot destroy it
+  raw_laps: "./data/raw/laps"
+  raw_telemetry: "./data/raw/telemetry"
+  processed: "./data/processed"
+  models: "./artifacts/models"
+  reports: "./artifacts/reports"
+  logs: "./logs"
+
+fuel_correction:
+  # F1Briefing: "each additional kilogram adding about 0.03 seconds per lap".
+  # Agreed value 0.032 s/kg sits inside the practitioner band 0.025-0.040.
+  penalty_s_per_kg: 0.032
+  initial_fuel_kg: 110.0      # FIA max fuel load
+  # Fuel burned on lap N = (N-1) * burn_per_lap (car runs lap N on start-of-lap fuel).
+  # burn_per_lap derived at runtime: initial_fuel_kg / scheduled_race_laps.
+
+car:
+  # FIA 2022 Technical Regulations Art. 4.1: minimum mass without fuel 798 kg.
+  min_mass_kg: 798.0
+  wheel_diameter_in: 18       # 18-inch wheels from 2022
+
+physics:
+  # Savitzky-Golay derivative estimation (Savitzky & Golay 1964).
+  savgol_polyorder: 2
+  savgol_windows: [7, 11, 15, 21]   # tested empirically; odd lengths required
+  gravity_ms2: 9.80665
+  # fastf1 reports position X, Y, Z in 1/10 m (fastf1/core.py:60-62), NOT
+  # metres. Curvature scales as 1/L, so raw coordinates give lateral
+  # acceleration 10x too low. Divide by this before differentiating.
+  position_units_per_metre: 10.0
+
+strategy:
+  pit_loss_s: 25.0            # typical pit-lane time loss 20-25 s
+
+clean_lap:
+  stint_median_multiplier: 1.07   # exclude laps > 107% of stint median
+  track_status_ok: "1"            # TrackStatus == '1' means green/all-clear
+
+target:
+  # CWI validation decision rule (Spearman energy vs degradation slope)
+  spearman_keep_threshold: 0.4    # energy stays, weight 0.5
+  spearman_downweight_low: 0.2    # 0.2-0.4 -> laptime weight 0.7
+  energy_weight_full: 0.5
+  laptime_weight_downweight: 0.7
+  linregress_min_r: 0.3           # keep stint slope only if |r| > 0.3
+  min_stint_laps: 5               # need enough clean laps to fit a slope
+
+modelling:
+  optuna_trials: 50
+  ts_splits: 4
+  train_seasons: [2022, 2023]
+  holdout_season: 2024
+  baseline_gate_pct: 15.0         # XGBoost must beat baseline MAE by >=15%
+  tier_gate_pct: 3.0              # each feature tier kept if CV MAE improves >=3%
+  ensemble_gate_pct: 5.0          # LSTM ensemble kept if MAE improves >=5%
+  ljung_box_alpha: 0.05           # residual autocorrelation gate
+  random_state: 42

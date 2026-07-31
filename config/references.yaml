@@ -1,0 +1,12 @@
+# Machine-readable citation index. Every design decision that rests on a
+# published result cites a key from this file in its module docstring.
+
+persson_2001: "Persson, B.N.J. (2001). Theory of rubber friction and contact mechanics. J. Chem. Phys. 115(8):3840-3861. DOI 10.1063/1.1388626"
+savitzky_golay_1964: "Savitzky, A. & Golay, M.J.E. (1964). Smoothing and Differentiation of Data by Simplified Least Squares Procedures. Anal. Chem. 36(8):1627-1639. DOI 10.1021/ac60214a047"
+chen_guestrin_2016: "Chen, T. & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. KDD '16, pp. 785-794. arXiv:1603.02754"
+grinsztajn_2022: "Grinsztajn, L., Oyallon, E. & Varoquaux, G. (2022). Why do tree-based models still outperform deep learning on typical tabular data? NeurIPS 35:507-520"
+lundberg_lee_2017: "Lundberg, S.M. & Lee, S.-I. (2017). A Unified Approach to Interpreting Model Predictions. NeurIPS 30:4765-4774"
+bergmeir_2018: "Bergmeir, C., Hyndman, R.J. & Koo, B. (2018). A note on the validity of cross-validation for evaluating autoregressive time series prediction. CSDA 120:70-83"
+hochreiter_1997: "Hochreiter, S. & Schmidhuber, J. (1997). Long Short-Term Memory. Neural Computation 9(8):1735-1780. DOI 10.1162/neco.1997.9.8.1735"
+ljung_box_1978: "Ljung, G.M. & Box, G.E.P. (1978). On a Measure of Lack of Fit in Time Series Models. Biometrika 65(2):297-303. DOI 10.1093/biomet/65.2.297"
+archard_1953: "Archard, J.F. (1953). Contact and Rubbing of Flat Surfaces. J. Appl. Phys. 24(8):981-988"
