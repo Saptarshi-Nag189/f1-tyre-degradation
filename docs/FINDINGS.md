@@ -176,7 +176,68 @@ getting *worse* under 25 driver one-hots. **A relative gate can be improved by
 weakening its reference.** The ablation caught it only because it compared
 absolute holdout error as well.
 
-### 4.5 Position units
+### 4.5 The telemetry-free proxy was inadequate, and the real one is mis-named
+
+Gate 3 demoted the energy component at ρ ≈ 0, but that used the speed-trap
+stand-in for `mean(v^2)`. Re-run on 10 races of true curvature telemetry
+(`run_telemetry_study.py`, 209 stints):
+
+| Proxy | Spearman with deg_rate | p |
+|---|---|---|
+| **aero_load_proxy** (true) | **−0.596** | 1.9e-21 |
+| lat_accel_max | −0.270 | 7.6e-05 |
+| combined_g_max | −0.269 | 8.0e-05 |
+| lat_accel_mean | −0.181 | 0.0088 |
+| speed-trap stand-in | ≈ 0.00 | — |
+
+Two conclusions, and the second matters more.
+
+**The Stage-0 shortcut was wrong.** Four speed-trap readings per lap do not
+approximate `mean(v^2)` well enough to test the hypothesis. The cheap proxy
+found nothing where the real one finds a strong relationship.
+
+**The relationship is strongly NEGATIVE, which falsifies the hypothesis as
+stated.** The pre-registered physics (archard_1953: wear follows frictional
+work, so more energy means more wear) predicts a *positive* correlation. The
+data says faster circuits degrade *less*:
+
+| Circuit | mean speed | mean deg_rate |
+|---|---|---|
+| Barcelona | 196 km/h | **+0.117** |
+| Bahrain | 203 km/h | +0.165 |
+| Miami | 214 km/h | +0.008 |
+| Jeddah | 230 km/h | **+0.019** |
+
+Circuit-level ρ = −0.717 (n=9, p=0.03).
+
+`mean(v^2)` is not measuring contact-patch work. It is measuring **straight-line
+fraction**: a high lap-average speed means a lot of the lap is spent not
+cornering, and cornering is what works the tyre. The compass document names it
+`aero_load_proxy` and treats it as an energy term; on this evidence that
+naming is misleading.
+
+**It is a track property, not a stint property.** 92.6% of its variance lies
+between circuits. So it is knowable in advance and legitimately usable by the
+simulator — but it is not new physics. Compare against the hand-coded traits:
+
+| Feature | Spearman with deg_rate |
+|---|---|
+| aero_load_proxy | −0.596 |
+| composite (hand-assigned 1-3) | +0.578 |
+| abrasion (hand-assigned 1-3) | +0.522 |
+
+Comparable strength, opposite sign: they measure the same underlying thing
+from opposite directions. The honest reading of the Tier C gate result is that
+physics aggregates are a **better-measured circuit encoding** — a continuous
+quantity derived from telemetry replacing a subjective 1-3 rating — rather
+than a new physical mechanism.
+
+**Tier C passes the gate at +13.47%** (threshold 3%), but on grouped CV over
+209 stints from 9 sessions of 2022 only, with no chronological holdout
+available on the pilot subset. Suggestive, not established. Confirming it
+requires telemetry across all 68 sessions and a proper 2022-2023 / 2024 test.
+
+### 4.6 Position units
 
 FastF1 reports `X`, `Y`, `Z` in **1/10 m** (`fastf1/core.py:60-62`), not
 metres. Curvature scales as 1/L, so raw coordinates give lateral acceleration
