@@ -54,6 +54,98 @@ class F1Pipeline:
         self.metrics: dict | None = None
         self._callback: Optional[Callable] = None
 
+    # --------------------------------------------------------------- training
+
+    def run_full_pipeline(self, callback: Optional[Callable] = None) -> dict:
+        """Assemble the dataset, train, and evaluate, end to end.
+
+        :param callback: optional ``fn(stage, progress, message)`` for UI
+            progress; ``progress`` runs 0.0 to 1.0.
+        :returns: mapping with metrics, the model path and the feature list.
+        """
+        import joblib
+
+        from src.features import assemble
+        from src.features import target as target_mod
+        from src.modelling import baseline, features as feat, splits, xgb_model
+
+        self._callback = callback
+        model_cfg = self.config["modelling"]
+
+        self._report("setup", 0.0, "Loading configuration")
+
+        self._report("load_stints", 0.10, "Assembling sessions into stints")
+        laps, stints = assemble.build_dataset()
+        if stints.empty:
+            raise RuntimeError("No usable stints; check collection and Gate 2.")
+
+        self._report("build_target", 0.35, "Building the CWI target")
+        target_cfg = self.config["target"]
+        stints, cwi_meta = target_mod.validate_and_build_cwi(
+            stints,
+            keep_thr=target_cfg["spearman_keep_threshold"],
+            downweight_low=target_cfg["spearman_downweight_low"],
+            energy_w_full=target_cfg["energy_weight_full"],
+            laptime_w_down=target_cfg["laptime_weight_downweight"])
+
+        processed = config.resolve_path("processed", create=True)
+        laps.to_parquet(processed / "laps_clean.parquet", index=False)
+        stints.to_parquet(processed / "stints_target.parquet", index=False)
+
+        self._report("build_features", 0.50, "Selecting features")
+        train, holdout = splits.season_holdout(
+            stints, model_cfg["train_seasons"], model_cfg["holdout_season"])
+        numeric = feat.available(stints.columns)
+        categories = feat.training_categories(train)
+        x_train, columns = feat.build_matrix(train, numeric, categories)
+        x_holdout, _ = feat.build_matrix(holdout, numeric, categories)
+
+        self._report("train", 0.65, "Fitting the model")
+        params = None
+        tuned_path = config.CONFIG_DIR / "tuned_params.json"
+        if tuned_path.exists():
+            import json
+            saved = json.loads(tuned_path.read_text(encoding="utf-8"))
+            if saved.get("features") == columns:
+                params = saved["params"]
+
+        train_matrix = pd.concat(
+            [train.reset_index(drop=True), x_train.reset_index(drop=True)[
+                [c for c in columns if c not in train.columns]]], axis=1)
+        holdout_matrix = pd.concat(
+            [holdout.reset_index(drop=True), x_holdout.reset_index(drop=True)[
+                [c for c in columns if c not in holdout.columns]]], axis=1)
+
+        result = xgb_model.train_xgb(
+            train_matrix, holdout_matrix, columns, "deg_rate", params)
+
+        self._report("evaluate", 0.85, "Evaluating against the baseline")
+        base = baseline.train_baseline(
+            train_matrix, holdout_matrix, columns, "deg_rate")
+        improvement = 100.0 * (base["metrics"]["MAE"]
+                               - result["metrics"]["MAE"]) / base["metrics"]["MAE"]
+
+        self._report("save", 0.95, "Saving artefacts")
+        models_dir = config.resolve_path("models", create=True)
+        model_path = models_dir / "xgb_deg_rate.joblib"
+        joblib.dump({"model": result["model"], "features": columns,
+                     "target": "deg_rate",
+                     "medians": base["medians"].to_dict()}, model_path)
+
+        self.model = result["model"]
+        self.features = columns
+        self.metrics = {"metrics": {"xgboost": result["metrics"],
+                                    "baseline": base["metrics"]},
+                        "improvement_pct": improvement,
+                        "train_seasons": sorted(train["Year"].unique().tolist()),
+                        "holdout_season": model_cfg["holdout_season"]}
+
+        self._report("save", 1.0, "Pipeline complete")
+        return {"metrics": result["metrics"], "baseline": base["metrics"],
+                "improvement_pct": improvement, "cwi": cwi_meta,
+                "model_path": str(model_path), "features": columns,
+                "n_train": len(train), "n_holdout": len(holdout)}
+
     # ---------------------------------------------------------------- loading
 
     def load(self) -> "F1Pipeline":
