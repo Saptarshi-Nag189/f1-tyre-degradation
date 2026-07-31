@@ -100,5 +100,9 @@ def setup_logging(name: str, *, level: int = logging.INFO,
             "%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
         root.addHandler(file_handler)
 
-    logging.getLogger("fastf1").setLevel(logging.WARNING)
+    # FastF1 attaches its own console handler and also propagates to the root,
+    # so without this every one of its lines is printed twice.
+    fastf1_logger = logging.getLogger("fastf1")
+    fastf1_logger.setLevel(logging.WARNING)
+    fastf1_logger.propagate = False
     return logging.getLogger(name)

@@ -182,6 +182,15 @@ def map_compounds(laps: pd.DataFrame, mapping: dict[str, Any],
     out["compound_ordinal"] = ordinals
     out["compound_known"] = out["compound_ordinal"].notna()
 
+    # The absolute C-ordinal is only resolvable where a Pirelli nomination has
+    # been confirmed, which covers a minority of events. The relative position
+    # within the weekend's nominated trio is always available and states no
+    # more than the data does: this was the softest of the three on offer.
+    # It is a weaker feature than the C-ordinal (it cannot compare a Monaco
+    # soft with a Silverstone soft) but it is never missing, so both are kept.
+    relative = {"HARD": 0.0, "MEDIUM": 1.0, "SOFT": 2.0}
+    out["compound_relative"] = raw.map(relative)
+
     for outcome, n in sorted(counts.items()):
         logger.info("  compound %-32s %6d rows", outcome, n)
     resolved = int(out["compound_known"].sum())

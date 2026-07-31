@@ -198,8 +198,8 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
         row.update(asdict(result))
         first = stint.iloc[0]
         for col in ("EventName", "Compound", "compound_ordinal",
-                    "compound_category", "compound_known", "Team",
-                    "pit_lane_start", "weather_imputed", "RaceLaps"):
+                    "compound_relative", "compound_category", "compound_known",
+                    "Team", "pit_lane_start", "weather_imputed", "RaceLaps"):
             if col in stint.columns:
                 row[col] = first[col]
         for col in ("AirTemp", "TrackTemp"):
