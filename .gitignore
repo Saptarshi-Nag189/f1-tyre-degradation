@@ -1,0 +1,20 @@
+# Virtual environment (contains the working CUDA torch build - never commit, never rebuild)
+.venv/
+
+# Data and derived artefacts
+data/
+cache/
+artifacts/
+results/
+logs/
+
+# Serialised formats
+*.pkl
+*.parquet
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/

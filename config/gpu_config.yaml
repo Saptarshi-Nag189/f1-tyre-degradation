@@ -1,0 +1,28 @@
+gpu:
+  memory_limit_gb: 5.0
+  fallback_to_cpu: true
+
+models:
+  lstm:
+    hidden_dim: 128
+    num_layers: 2
+    dropout: 0.2
+    attention_heads: 4
+    learning_rate: 0.0005
+  
+  xgboost:
+    tree_method: 'hist'
+    max_depth: 8
+    learning_rate: 0.05
+    n_estimators: 1000
+  
+  ensemble:
+    weights:
+      lstm: 0.4
+      xgboost: 0.4
+      cuml: 0.2
+
+optimization:
+  early_stopping_patience: 25
+  gradient_clip_norm: 1.0
+  lr_schedule_patience: 10

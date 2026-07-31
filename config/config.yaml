@@ -1,0 +1,14 @@
+data:
+  years: [2022, 2023]
+  sessions: ['Practice 3', 'Qualifying', 'Race']
+  cache_dir: './data/cache/fastf1_cache'
+
+model:
+  random_state: 42
+  sequence_length: 3
+  epochs: 100
+  batch_size: 32
+
+feature_engineering:
+  enable_gpu_processing: true
+  gpu_batch_size: 2000
