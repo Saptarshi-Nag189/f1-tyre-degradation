@@ -1,0 +1,518 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\begin{document}
+
+\title{Correlation-Based Stint Filtering Biases Tyre\\
+Degradation Models: Evidence from Three\\
+Seasons of Formula~1 Telemetry}
+
+\author{\IEEEauthorblockN{Saptarshi Nag}
+\IEEEauthorblockA{\textit{Independent Research} \\
+\texttt{saptarshireeju611@gmail.com}}}
+
+\maketitle
+
+\begin{abstract}
+Tyre degradation models for Formula~1 conventionally estimate a per-stint
+degradation rate as the slope of fuel-corrected lap time against tyre age, and
+retain only stints whose linear fit exceeds a correlation threshold. We show
+that this near-universal quality criterion is not a quality criterion at all.
+Measured across 3\,892 stints from the 2022--2024 seasons, the
+absolute correlation $|r|$ tracks slope \emph{magnitude} ($\rho = 0.53$) far
+more strongly than it tracks slope \emph{precision} ($\rho = -0.20$), because a
+genuinely flat stint has low correlation by construction however well it is
+measured. The resulting acceptance rate rises monotonically from 29.5\% for
+near-zero slopes to 98.7\% for large ones, systematically deleting
+low-degradation circuits from the training set. Replacing the criterion with
+one based on the standard error of the fitted slope raises the between-event
+share of target variance from 32.3\% to 49.7\%, the cross-season per-circuit
+correlation from 0.18 to 0.64, and corrects every remaining directional error
+in a downstream pit-strategy simulator. We further report that a
+telemetry-derived energy proxy widely treated as an aerodynamic load term
+correlates \emph{negatively} with degradation ($\rho = -0.60$), falsifying the
+frictional-work hypothesis in that form, and argue from a variance
+decomposition that it is better understood as a measure of straight-line
+fraction. All results are accompanied by a measured performance ceiling, which
+we argue should be established before any improvement threshold is fixed.
+\end{abstract}
+
+\begin{IEEEkeywords}
+motorsport analytics, tyre degradation, selection bias, time-series
+cross-validation, gradient boosting, Formula~1
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+\IEEEPARstart{T}{yre} degradation is the dominant controllable variable in
+Formula~1 race strategy. A pit stop costs roughly 20--25\,s of track position,
+so the decision of when to stop is governed almost entirely by the rate at
+which lap time deteriorates with tyre age. Public telemetry, exposed through
+the FastF1 library, has made this problem accessible outside the teams
+themselves, and a standard modelling recipe has emerged: aggregate laps into
+stints, fit a linear model of fuel-corrected lap time against tyre age, and
+treat the resulting slope as the degradation rate.
+
+That recipe contains a filtering step that has, to our knowledge, not been
+examined. Because a fitted slope may be noisy, stints are retained only when
+the regression achieves some minimum absolute correlation, typically
+$|r| \geq 0.3$. The stated justification is fit quality. We show the criterion
+does not measure fit quality, and that its failure mode is not random but
+systematically biased against precisely the circuits where a strategist most
+needs an accurate answer.
+
+The contributions of this paper are:
+
+\begin{enumerate}
+\item A quantitative demonstration that correlation-based stint filtering
+      selects on slope magnitude rather than estimation precision, with an
+      acceptance rate varying by a factor of 3.3 across the range of true
+      slopes (Section~\ref{sec:bias}).
+\item A replacement criterion based on the standard error of the fitted slope,
+      and measurement of its effect on variance structure, cross-season
+      transferability and downstream strategy correctness
+      (Section~\ref{sec:fix}).
+\item Evidence that a commonly used energy proxy, $\overline{v^2}$, correlates
+      negatively with degradation and is better interpreted as a track
+      geometry descriptor than as a contact-patch work term
+      (Section~\ref{sec:energy}).
+\item An argument, with worked example, that improvement thresholds should be
+      set only after the achievable ceiling has been measured
+      (Section~\ref{sec:ceiling}).
+\end{enumerate}
+
+\section{Related Work}
+
+Rubber friction is viscoelastic, decomposing into adhesion and hysteresis
+components; Persson's multiscale theory obtains friction by integrating
+viscoelastic losses over the surface roughness spectrum~\cite{persson2001}.
+Wear literature descending from Archard establishes that wear rate is
+proportional to frictional work dissipated at the contact
+patch~\cite{archard1953}, which motivates including an energy term in any
+composite wear index.
+
+Direct application of that physics requires a tyre force model. The Pacejka
+Magic Formula~\cite{pacejka2012,bakker1986} is the standard, but its
+coefficients are load-dependent and fitted to rig data that is proprietary for
+Formula~1 constructions. We therefore exclude it, following the same reasoning
+as prior public work, and use curvature-derived proxies computed from position
+telemetry.
+
+For the learning component, gradient-boosted trees remain state of the art on
+medium-sized tabular data, with inductive biases robust to uninformative
+features and irregular target functions~\cite{chen2016,grinsztajn2022}. On
+validation, standard $k$-fold cross-validation leaks future information when
+observations are serially dependent~\cite{bergmeir2018,bergmeir2012}, requiring
+chronological splits. Prior Formula~1 work using FastF1 includes tyre energy
+forecasting with gradient boosting and recurrent models~\cite{sulsky2025} and a
+state-space treatment separating fuel mass from latent tyre
+pace~\cite{statespace2025}; both note that the practical industry standard
+remains simple linear degradation models.
+
+Derivative estimation from noisy telemetry uses Savitzky--Golay
+filtering~\cite{savitzky1964}, whose original coefficient tables contain
+typographical errors corrected subsequently~\cite{steinier1972}; we rely on a
+library implementation rather than transcribed coefficients.
+
+\section{Data and Methodology}
+
+\subsection{Collection}
+
+We collect all race sessions from the 2022--2024 Formula~1 seasons, a single
+ground-effect regulation era, via FastF1. This yields 68 sessions and 49\,993
+laps. The API enforces a limit of 500 requests per hour. We measure the true
+cost per session before bulk collection: a race loaded with laps and weather
+but without telemetry costs 11 requests, a repeat load of the same session
+costs 0, and enabling telemetry adds 2.
+
+The zero-cost repeat is architecturally important. The cached session class
+places the cache lookup ahead of the rate-limited transport in the method
+resolution order, so a cache hit never reaches the limiter. Preserving the
+cache therefore makes all subsequent processing free, and we write each session
+to its own file through an atomic rename so that interruption costs one session
+rather than the corpus.
+
+\subsection{Target construction}
+
+Lap times are fuel-corrected before any slope is fitted. Fuel remaining on
+lap~$N$ of a race of $L$ laps, starting from the regulation maximum
+$F_0 = 110$\,kg, is
+\begin{equation}
+F(N) = F_0 - (N-1)\frac{F_0}{L},
+\end{equation}
+since the car completes lap~$N$ carrying the fuel it held at the start of that
+lap. The corrected time is $t^{*} = t - \kappa F(N)$ with
+$\kappa = 0.032$\,s/kg. Omitting this correction produces a target dominated by
+fuel burn rather than tyre wear.
+
+Representative laps are selected by a mask excluding in-laps and out-laps,
+non-green track status, the first lap of each stint, laps slower than 107\% of
+the stint median, and laps without a recorded time. This retains 84.8\% of laps.
+
+For each stint $s$, defined by the tuple (season, round, driver number, stint
+number), we fit
+\begin{equation}
+t^{*}_{s}(a) = \beta_{0,s} + \beta_{1,s}\, a + \varepsilon,
+\label{eq:slope}
+\end{equation}
+where $a$ is tyre age in laps. The degradation rate is $\beta_{1,s}$, in
+seconds of lap time lost per lap of tyre age.
+
+\subsection{Features and validation}
+
+Features must be knowable \emph{before} a stint is run, since the intended
+application chooses stint length. Stint length and clean-lap count are
+therefore excluded as reverse-causal. The retained set comprises tyre age at
+stint start, compound as both an absolute Pirelli C-number and a within-weekend
+relative ordinal, stint mean air and track temperature, three circuit trait
+ratings, scheduled race distance, and constructor identity as a one-hot block.
+
+Validation is chronological and grouped on whole events. Splitting rows rather
+than events allows stints from a single race to fall on both sides of a fold
+boundary, leaking shared track, weather and safety-car conditions. We split on
+the ordered set of unique (season, round) keys and map back to rows, asserting
+that no event straddles any boundary. Models train on 2022--2023 and are
+evaluated on a held-out 2024 season.
+
+\section{Correlation-Based Filtering is Magnitude Selection}
+\label{sec:bias}
+
+The conventional criterion retains stint $s$ when $|r_s| \geq 0.3$, where
+$r_s$ is the Pearson correlation of the fit in~\eqref{eq:slope}. If this
+measures fit quality, $|r_s|$ should correlate with the precision of
+$\hat{\beta}_{1,s}$, that is inversely with its standard error
+$\mathrm{se}(\hat{\beta}_{1,s})$, and should be independent of the magnitude
+$|\hat{\beta}_{1,s}|$.
+
+We fit all 2\,815 dry stints without any filtering and measure both. The result
+is the opposite of the stated intent:
+\begin{align}
+\rho\!\left(|r|,\ |\hat{\beta}_1|\right) &= +0.53 \\
+\rho\!\left(|r|,\ \mathrm{se}(\hat{\beta}_1)\right) &= -0.20
+\end{align}
+
+The criterion tracks how large the degradation is roughly three times more
+strongly than how well it was measured. The mechanism is elementary: for a fit
+with residual scatter $\sigma$ over $n$ laps spanning tyre ages with standard
+deviation $s_a$,
+\begin{equation}
+r \approx \frac{\beta_1 s_a}{\sqrt{\beta_1^2 s_a^2 + \sigma^2}},
+\end{equation}
+so $r \to 0$ as $\beta_1 \to 0$ regardless of how small $\sigma$ is. A stint
+with genuinely no degradation cannot achieve high correlation, however
+precisely it is measured.
+
+Table~\ref{tab:passrate} shows the consequence. Acceptance rises monotonically
+from 29.5\% to 98.7\% across the range of true slopes.
+
+\begin{table}[t]
+\caption{Acceptance rate of the $|r| \geq 0.3$ criterion, by true slope
+magnitude. A quality criterion would be flat.}
+\label{tab:passrate}
+\centering
+\begin{tabular}{lrr}
+\toprule
+$|\hat{\beta}_1|$ (s/lap) & Stints & Accepted \\
+\midrule
+0.00--0.02 & 505 & \textbf{29.5\%} \\
+0.02--0.05 & 653 & 86.2\% \\
+0.05--0.10 & 935 & 98.7\% \\
+0.10--0.20 & 541 & 99.8\% \\
+$>0.20$    & 179 & 99.4\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The bias is not uniform across circuits. Monaco, the canonical
+low-degradation venue, has a median absolute slope of 0.0175\,s/lap against
+0.0614 elsewhere, but a median slope standard error of 0.0062 against 0.0152
+elsewhere. Its stints are measured \emph{more} precisely than average and were
+being discarded for being flat.
+
+A second, compounding effect arises from the common practice of excluding
+negative slopes as physically implausible. Monaco's true median slope is
+$-0.008$\,s/lap. A circuit with no measurable degradation produces slopes
+scattered either side of zero, and truncating at zero retains only the positive
+half of that noise, biasing the estimate upward exactly where negligible
+degradation is the operationally important fact.
+
+\section{A Precision-Based Criterion}
+\label{sec:fix}
+
+We replace the correlation threshold with a bound on the standard error of the
+fitted slope, retaining stint $s$ when
+\begin{equation}
+\mathrm{se}(\hat{\beta}_{1,s}) \leq \tau, \qquad \tau = 0.02\ \text{s/lap}.
+\end{equation}
+The value of $\tau$ is chosen relative to the quantity of interest: a typical
+degradation rate is 0.065\,s/lap, so $\tau$ admits stints whose rate is pinned
+well enough to distinguish a high-degradation circuit from a low one. This
+accepts a well-measured flat stint and rejects a noisy one, which is the
+property actually required.
+
+The lower plausibility bound is set to $-0.05$\,s/lap rather than zero,
+corresponding to approximately one second of improvement across a
+twenty-lap stint. This separates track evolution, which genuinely occurs, from
+measurement noise around a true rate of zero.
+
+Table~\ref{tab:effect} reports the effect. Every quantity moves in the same
+direction, and the change is substantial rather than marginal.
+
+\begin{table}[t]
+\caption{Effect of replacing correlation-based with precision-based filtering.}
+\label{tab:effect}
+\centering
+\begin{tabular}{lrr}
+\toprule
+Quantity & $|r| \geq 0.3$ & $\mathrm{se} \leq 0.02$ \\
+\midrule
+Between-event variance share & 32.3\% & \textbf{49.7\%} \\
+Oracle MAE ceiling & 27.4\% & \textbf{38.0\%} \\
+Cross-season circuit $r$ (23 vs 24) & 0.18 & \textbf{0.64} \\
+Holdout $R^2$, gradient boosting & $+0.047$ & \textbf{$+0.097$} \\
+Holdout $R^2$, linear baseline & $-0.053$ & \textbf{$+0.044$} \\
+Retained stints & 2\,101 & 1\,726 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The rise in cross-season correlation from 0.18 to 0.64 is the most consequential
+result. Under the correlation criterion, a circuit's degradation in one season
+barely predicted the next, which would ordinarily be interpreted as genuine
+year-to-year instability arising from compound and car changes. It was instead
+an artefact of the filter. The signal was present throughout and was being
+removed.
+
+We validate the correction against domain ground truth using a pit-strategy
+simulator driven by the resulting rates. Under the correlation criterion the
+simulator returned a two-stop strategy for Monaco, which is unambiguously
+wrong. Under the precision criterion it returns a one-stop for Monaco, Monza,
+Spa, Singapore, Jeddah and Silverstone, and a two-stop for Bahrain, Suzuka,
+Barcelona and Hungaroring, all consistent with observed practice.
+
+\section{The Energy Proxy Measures Track Geometry}
+\label{sec:energy}
+
+Physics-informed designs include an energy term in the target, motivated by the
+proportionality of wear to frictional work~\cite{archard1953}. The standard
+telemetry proxy is $\overline{v^2}$, the mean squared speed over a stint,
+described as an aerodynamic load term.
+
+We compute this from position telemetry over ten races (209 stints). Position
+coordinates are reported in units of $10^{-1}$\,m rather than metres; since
+curvature scales as the inverse of length, neglecting this yields lateral
+accelerations an order of magnitude too small. After correction, the median
+peak lateral acceleration is 47.2\,m/s$^2$ (4.8\,g) and median peak combined
+acceleration 4.85\,g, both consistent with Formula~1 vehicle dynamics.
+
+The measured correlation with degradation is strong and negative:
+$\rho = -0.596$ ($p = 1.9 \times 10^{-21}$). This falsifies the frictional-work
+hypothesis in the form stated, which predicts a positive relationship. A
+telemetry-free approximation using only speed-trap readings yields
+$\rho \approx 0$, so the cheaper substitute produces a false negative and does
+not permit the hypothesis to be tested at all.
+
+A variance decomposition explains the sign. 92.6\% of the variance of
+$\overline{v^2}$ lies between circuits rather than between stints, so it is a
+track descriptor, not a per-stint quantity. Circuits with high mean speed spend
+proportionally less of the lap cornering, and cornering rather than speed loads
+the tyre. Barcelona, at 196\,km/h mean, averages $+0.117$\,s/lap of degradation;
+Jeddah, at 230\,km/h, averages $+0.019$. The circuit-level correlation is
+$\rho = -0.717$ ($n=9$).
+
+Compared against hand-assigned circuit severity ratings, $\overline{v^2}$
+achieves $\rho = -0.596$ where a subjective composite rating achieves
+$+0.578$: comparable strength, opposite sign. We therefore interpret the proxy
+as an automatically measured circuit severity descriptor rather than a
+contact-patch work term, and suggest that the name \emph{aerodynamic load
+proxy} is misleading.
+
+\section{Measure the Ceiling Before Setting the Threshold}
+\label{sec:ceiling}
+
+Our pre-registered acceptance criterion required the tuned model to improve on
+a linear baseline by at least 15\% in held-out mean absolute error. It does
+not: the improvement is $-0.2\%$.
+
+That figure is uninterpretable without a ceiling. We compute an oracle
+predictor that assigns each stint the mean degradation of its own event and
+compound, which requires knowing the answer in advance and therefore bounds any
+model using event-level features. It improves on the global mean by 38.0\%. The
+15\% threshold thus demanded 40\% of all achievable headroom, a requirement
+fixed before anyone established what was achievable.
+
+The reason for the low ceiling is structural: only 49.7\% of degradation
+variance lies between events. The remainder separates stints within a single
+race, reflecting traffic, fuel management and driver instruction, none of which
+is recoverable from circuit-level features.
+
+\begin{table}[t]
+\caption{Held-out performance, 2022--2023 training, 2024 evaluation.}
+\label{tab:results}
+\centering
+\begin{tabular}{lrr}
+\toprule
+Model & MAE (s/lap) & $R^2$ \\
+\midrule
+Mean predictor & 0.03539 & --- \\
+Linear baseline & \textbf{0.03337} & $+0.044$ \\
+Gradient boosting (tuned) & 0.03345 & \textbf{$+0.097$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:results} shows the tuned tree ensemble level with the linear
+baseline on absolute error while achieving more than double its $R^2$. Once the
+target's construction bias is removed, the relationship between circuit
+severity and degradation is close to linear, and the additional flexibility of
+boosting contributes only in the tails.
+
+\subsection{Fit adequacy}
+
+We verify that this result reflects the problem rather than a mis-specified
+model, via a capacity sweep (Table~\ref{tab:capacity}). Held-out error traces a
+clear minimum at 71 trees of depth 5. Below it, training and held-out error are
+both high and nearly equal, the signature of insufficient capacity; above it,
+training error falls to 0.0145 while held-out error rises, the signature of
+memorisation. The selected model sits at the interior optimum. The
+training-to-held-out gap is $+14.7\%$, and the cross-validation estimate lies
+within 5.0\% of held-out performance, indicating that the grouped chronological
+scheme is an honest predictor of generalisation.
+
+\begin{table}[t]
+\caption{Capacity sweep. The optimum is interior, bracketed by under- and
+over-fitting.}
+\label{tab:capacity}
+\centering
+\begin{tabular}{rrrrr}
+\toprule
+Trees & Depth & Train MAE & Held-out MAE & Gap \\
+\midrule
+20   & 2 & 0.03527 & 0.03496 & $-0.9\%$ \\
+50   & 3 & 0.03186 & 0.03388 & $+6.4\%$ \\
+\textbf{71} & \textbf{5} & \textbf{0.02806} & \textbf{0.03334} & $+18.8\%$ \\
+150  & 5 & 0.02450 & 0.03379 & $+37.9\%$ \\
+400  & 4 & 0.02223 & 0.03518 & $+58.2\%$ \\
+1000 & 8 & 0.01451 & 0.03544 & $+144.3\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Split-half reliability of the target, obtained by fitting~\eqref{eq:slope}
+separately on odd and even clean laps of each stint, is 0.92 (Pearson). The
+target is therefore measured reliably; the difficulty lies in transferring
+across events, not in measuring within them.
+
+\section{Discussion}
+
+\subsection{Threats to validity}
+
+The precision threshold $\tau$ is itself a filter on the target and cannot be
+entirely free of selection effects. We chose it by reference to the magnitude
+of a typical degradation rate rather than by optimising held-out performance,
+and we note that a stricter correlation threshold was tested, produced a better
+$R^2$, and was rejected on the grounds that its justification would have been
+its effect on the metric.
+
+Retention falls from 59.7\% to 44.3\% under the precision criterion. The trade
+is favourable on every measured axis, but it is a trade.
+
+Residuals correlate $-0.26$ with position through the held-out season
+($p = 2.4\times10^{-11}$), indicating that the model is well fitted but not
+uniformly calibrated across a season. We report this rather than correct it,
+as any correction would consume the held-out set.
+
+The energy-proxy analysis rests on ten races and nine circuits. The
+stint-level correlation is robust ($n=209$, $p < 10^{-20}$), but the
+circuit-level figure ($n=9$) is indicative only.
+
+\subsection{Practical implication}
+
+Because per-circuit degradation transfers across seasons at $r = 0.64$--$0.74$
+once the bias is removed, while the model captures only 14.4\% of achievable
+headroom, a strategy system should prefer directly observed per-circuit rates
+where they exist and use a model only to fill gaps. We adopt this ordering, and
+record for each estimate whether it is observed or modelled.
+
+\section{Conclusion}
+
+A correlation threshold applied to a regression slope selects for large slopes,
+not for well-estimated ones. In tyre degradation modelling this systematically
+removes low-degradation circuits, and we have shown it suppresses cross-season
+transferability by a factor of three and produces demonstrably wrong strategy
+recommendations. Replacing it with a bound on the slope standard error is a
+one-line change that recovers the signal.
+
+We further find that the standard $\overline{v^2}$ energy proxy correlates
+negatively with degradation and is more accurately described as a measure of
+track straight-line fraction, and we argue that improvement thresholds are not
+interpretable until the achievable ceiling has been measured.
+
+The broader methodological point is that each of these errors was embedded in
+a design that was physically motivated, properly cited, and internally
+coherent. None was detectable by inspection; each required measuring the
+quantity that the design assumed.
+
+\section*{Reproducibility}
+
+All results are reproducible from the accompanying implementation. Collection
+is resumable and cached; the complete pipeline from cold API to trained model
+runs in approximately ten minutes of network time and minutes of computation on
+a single CPU core. Tuned hyperparameters are persisted and version-checked
+against the feature set.
+
+\begin{thebibliography}{00}
+
+\bibitem{persson2001} B.~N.~J. Persson, ``Theory of rubber friction and contact
+mechanics,'' \emph{J. Chem. Phys.}, vol.~115, no.~8, pp.~3840--3861, 2001.
+
+\bibitem{archard1953} J.~F. Archard, ``Contact and rubbing of flat surfaces,''
+\emph{J. Appl. Phys.}, vol.~24, no.~8, pp.~981--988, 1953.
+
+\bibitem{pacejka2012} H.~B. Pacejka, \emph{Tire and Vehicle Dynamics}, 3rd ed.
+Oxford, U.K.: Elsevier, 2012.
+
+\bibitem{bakker1986} E.~Bakker, L.~Nyborg, and H.~B. Pacejka, ``Tyre modelling
+for use in vehicle dynamics studies,'' SAE Technical Paper 870421, 1986.
+
+\bibitem{chen2016} T.~Chen and C.~Guestrin, ``XGBoost: A scalable tree boosting
+system,'' in \emph{Proc. 22nd ACM SIGKDD}, 2016, pp.~785--794.
+
+\bibitem{grinsztajn2022} L.~Grinsztajn, E.~Oyallon, and G.~Varoquaux, ``Why do
+tree-based models still outperform deep learning on typical tabular data?'' in
+\emph{Adv. Neural Inf. Process. Syst.}, vol.~35, 2022, pp.~507--520.
+
+\bibitem{bergmeir2018} C.~Bergmeir, R.~J. Hyndman, and B.~Koo, ``A note on the
+validity of cross-validation for evaluating autoregressive time series
+prediction,'' \emph{Comput. Statist. Data Anal.}, vol.~120, pp.~70--83, 2018.
+
+\bibitem{bergmeir2012} C.~Bergmeir and J.~M. Ben\'{i}tez, ``On the use of
+cross-validation for time series predictor evaluation,'' \emph{Inf. Sci.},
+vol.~191, pp.~192--213, 2012.
+
+\bibitem{savitzky1964} A.~Savitzky and M.~J.~E. Golay, ``Smoothing and
+differentiation of data by simplified least squares procedures,'' \emph{Anal.
+Chem.}, vol.~36, no.~8, pp.~1627--1639, 1964.
+
+\bibitem{steinier1972} J.~Steinier, Y.~Termonia, and J.~Deltour, ``Comments on
+smoothing and differentiation of data by simplified least square procedure,''
+\emph{Anal. Chem.}, vol.~44, no.~11, pp.~1906--1909, 1972.
+
+\bibitem{lundberg2017} S.~M. Lundberg and S.-I. Lee, ``A unified approach to
+interpreting model predictions,'' in \emph{Adv. Neural Inf. Process. Syst.},
+vol.~30, 2017, pp.~4765--4774.
+
+\bibitem{sulsky2025} ``Explainable time series prediction of tyre energy in
+Formula One race strategy,'' arXiv:2501.04067, 2025.
+
+\bibitem{statespace2025} ``A state-space approach to modeling tire degradation
+in Formula 1 racing,'' arXiv:2512.00640, 2025.
+
+\end{thebibliography}
+
+\end{document}

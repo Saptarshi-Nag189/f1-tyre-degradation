@@ -18,3 +18,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+
+# LaTeX build artefacts
+*.aux
+*.log
+*.out
+*.synctex.gz
