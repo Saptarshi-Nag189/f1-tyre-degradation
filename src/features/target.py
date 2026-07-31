@@ -166,7 +166,9 @@ def stint_degradation(stint: pd.DataFrame, min_r: float, min_laps: int,
 
 def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
                       energy_col: str | None = None,
-                      exclude_wet: bool = True) -> pd.DataFrame:
+                      exclude_wet: bool = True,
+                      exclude_negative: bool = False,
+                      max_deg_rate: float | None = None) -> pd.DataFrame:
     """Build the per-stint target table.
 
     :param laps: fully validated and fuel-corrected laps frame.
@@ -175,6 +177,9 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
     :param energy_col: per-lap energy aggregate column, or None for the
         telemetry-free proxy.
     :param exclude_wet: drop stints flagged wet (different physics).
+    :param exclude_negative: drop stints whose corrected pace improves with
+        tyre age, which measures track evolution rather than tyre wear.
+    :param max_deg_rate: drop implausibly steep slopes, in s/lap.
     :returns: one row per stint with deg_rate, r_value, n_laps, energy_proxy.
     """
     frame = laps
@@ -212,6 +217,22 @@ def build_stint_table(laps: pd.DataFrame, min_r: float, min_laps: int,
         rows.append(row)
 
     table = pd.DataFrame(rows)
+
+    # Physical plausibility bounds, applied after fitting so the counts of what
+    # they remove are visible rather than silent.
+    if not table.empty:
+        if exclude_negative:
+            n_negative = int((table["deg_rate"] < 0).sum())
+            table = table[table["deg_rate"] >= 0]
+            logger.info("  excluded %d stints with negative slopes "
+                        "(track evolution, not tyre recovery)", n_negative)
+        if max_deg_rate is not None:
+            n_extreme = int((table["deg_rate"] > max_deg_rate).sum())
+            table = table[table["deg_rate"] <= max_deg_rate]
+            logger.info("  excluded %d stints above %.2f s/lap (data artefacts)",
+                        n_extreme, max_deg_rate)
+        table = table.reset_index(drop=True)
+
     retention = 100.0 * len(table) / max(n_all, 1)
     logger.info("Stint table: %d usable of %d raw stints (%.1f%% retention)",
                 len(table), n_all, retention)

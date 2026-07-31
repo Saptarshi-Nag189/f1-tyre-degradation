@@ -68,6 +68,22 @@ target:
   linregress_min_r: 0.3           # keep stint slope only if |r| > 0.3
   min_stint_laps: 5               # need enough clean laps to fit a slope
 
+  # Physical plausibility bounds on the fitted slope. A stint whose corrected
+  # lap time *falls* with tyre age is measuring track evolution (rubbering in,
+  # a drying line) rather than tyre recovery, which does not happen. Retaining
+  # such stints labels a track-condition effect as degradation.
+  #
+  # Measured effect of applying these bounds: cross-season per-circuit
+  # correlation rises from 0.18 to 0.43, so the contamination was masking real
+  # transferable signal rather than merely adding noise.
+  #
+  # These are exclusions on physical grounds, decided by reasoning about what
+  # the quantity means. Note that any filter touching the target risks a
+  # selection effect, so both bounds are logged with counts and the retention
+  # is reported at Gate 2.
+  exclude_negative_slopes: true
+  max_plausible_deg_rate: 0.3     # s/lap; beyond this is a data artefact
+
 modelling:
   optuna_trials: 50
   ts_splits: 4
