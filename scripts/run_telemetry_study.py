@@ -130,18 +130,33 @@ def main() -> int:
 
     if can_split and len(holdout) >= 40:
         from sklearn.metrics import mean_absolute_error, r2_score
+        # Both arms are tuned separately. Comparing at fixed default parameters
+        # measures whether physics rescues a badly configured model, not
+        # whether it improves a good one, and on this data the two answers
+        # differ by a factor of three (+4.63% untuned against +1.49% tuned).
+        # The same trap produced an apparent gain from Driver features that
+        # vanished under a fair comparison.
         for label, feature_set in (("core", core), ("core + physics", core + tier_c)):
             categories = features.training_categories(train)
             x_train, columns = features.build_matrix(train, feature_set, categories)
             x_holdout, _ = features.build_matrix(holdout, feature_set, categories)
-            model = xgb_model.XGBRegressor(**xgb_model.DEFAULT_PARAMS)
+
+            tuning_frame = pd.concat(
+                [train.reset_index(drop=True), x_train.reset_index(drop=True)[
+                    [c for c in columns if c not in train.columns]]], axis=1)
+            best = tuning.tune(tuning_frame, columns, "deg_rate",
+                               n_trials=settings["modelling"]["optuna_trials"],
+                               n_splits=settings["modelling"]["ts_splits"])
+
+            model = xgb_model.XGBRegressor(
+                **{**xgb_model.DEFAULT_PARAMS, **best["best_params"]})
             model.fit(x_train.to_numpy(float), train["deg_rate"].to_numpy(float))
             predictions = model.predict(x_holdout.to_numpy(float))
             mae = float(mean_absolute_error(holdout["deg_rate"], predictions))
             results[label] = {"mae": mae,
                               "r2": float(r2_score(holdout["deg_rate"], predictions)),
-                              "n_features": len(columns)}
-            logger.info("  %-16s MAE %.5f  R2 %+.4f  (%d features)",
+                              "n_features": len(columns), "tuned": True}
+            logger.info("  %-16s MAE %.5f  R2 %+.4f  (%d features, tuned)",
                         label, mae, results[label]["r2"], len(columns))
     else:
         n_splits = min(3, max(2, len(splits.event_order(merged)) - 1))
