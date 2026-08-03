@@ -27,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src import config                                     # noqa: E402
-from src.acquisition import cache                          # noqa: E402
+from src.acquisition import cache, collector               # noqa: E402
 from src.features import physics                           # noqa: E402
 
 
@@ -53,8 +53,19 @@ def process_session(year: int, round_number: int, window: int) -> pd.DataFrame:
     """
     import fastf1
 
-    session = fastf1.get_session(year, round_number, "R")
-    session.load(laps=True, telemetry=True, weather=False, messages=False)
+    try:
+        session = fastf1.get_session(year, round_number, "R")
+        session.load(laps=True, telemetry=True, weather=False, messages=False)
+    except Exception as exc:
+        # Same discipline as the laps collector. Rate limiting is detected by
+        # exception type, and a schedule-load failure is treated as evidence of
+        # it too: FastF1 reports "Failed to load any schedule data" once the
+        # limit is reached, and without this the loop ploughs on issuing
+        # doomed requests for every remaining session.
+        if collector._is_rate_limit(exc) or "schedule data" in str(exc):
+            raise collector.RateLimitHit(
+                f"Rate limit reached at {year} R{round_number}") from exc
+        raise
 
     rows = []
     for _, lap in session.laps.iterlaps():
@@ -109,6 +120,7 @@ def main() -> int:
     sessions = sessions[:args.limit]
     logger.info("Telemetry pilot over %d sessions", len(sessions))
 
+    rate_limited, failed = False, 0
     for year, rnd in sessions:
         out_path = out_dir / f"lapagg_{year}_R{rnd:02d}.parquet"
         if out_path.exists():
@@ -126,7 +138,14 @@ def main() -> int:
             logger.info("  %s R%02d: %d laps aggregated, %d requests, %.0f KB",
                         year, rnd, len(frame), counter.count,
                         out_path.stat().st_size / 1024)
+        except collector.RateLimitHit as exc:
+            logger.error("%s. Re-run after the window resets; aggregates "
+                         "already written are safe on disk.", exc)
+            rate_limited = True
+            ledger.record(counter.reset(), f"{year}_R{rnd:02d}_telemetry")
+            break
         except Exception as exc:
+            failed += 1
             logger.error("Failed %s R%02d: %s: %s", year, rnd,
                          type(exc).__name__, exc)
         finally:
@@ -143,7 +162,17 @@ def main() -> int:
     logger.info("Aggregated %d laps across %d sessions, %.1f MB total",
                 len(combined), len(files),
                 sum(p.stat().st_size for p in files) / 1e6)
+    by_season = combined.groupby("Year")["RoundNumber"].nunique().to_dict()
+    logger.info("Coverage by season: %s", by_season)
     checks = physics.plausibility_report(combined)
+
+    if rate_limited:
+        logger.error("Stopped on the rate limit; %d sessions still missing.",
+                     len(sessions) - len(files))
+        return 2
+    if failed:
+        logger.warning("%d sessions failed for other reasons", failed)
+        return 1
     return 0 if all(checks.values()) else 1
 
 
