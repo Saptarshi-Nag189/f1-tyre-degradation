@@ -155,15 +155,16 @@ because transfer overhead dominates. GPU only wins above roughly 200k rows.
 
 ## Setup
 
-Python 3.12. See `requirements.lock.txt` for the working versions and
-`CLAUDE.md` for the conventions this repository follows.
+Python 3.12. `CLAUDE.md` documents the conventions this repository follows.
 
 ```bash
 python -m venv .venv && .venv/Scripts/activate
 pip install -r requirements.txt
-python scripts/probe_api_cost.py
+
+python scripts/probe_api_cost.py          # measure API cost first
 python scripts/run_collect_laps.py --year 2023
-python scripts/run_build_dataset.py && python scripts/run_train.py
+python scripts/run_build_dataset.py
+python scripts/run_train.py
 ```
 
 Full measurements and the reasoning behind each decision are in

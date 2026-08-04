@@ -24,3 +24,9 @@ __pycache__/
 *.log
 *.out
 *.synctex.gz
+
+# Local environment record. A full pip freeze of a development venv is not
+# this project's dependency surface: it drags in unrelated transitive
+# packages and produces permanent Dependabot noise. requirements.txt is the
+# manifest.
+requirements.lock.txt
