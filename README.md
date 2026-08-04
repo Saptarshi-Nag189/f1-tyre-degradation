@@ -1,105 +1,171 @@
 # F1 Tyre Degradation Model
 
-Predicts tyre degradation rate, in seconds of lap time lost per lap of tyre
-age, from FastF1 race data for the 2022-2024 ground-effect regulation era.
+Predicts how fast a Formula 1 tyre loses lap time, in seconds per lap of tyre
+age, and uses that to simulate pit strategies. Built on public FastF1 data for
+the 2022-2024 ground-effect regulation era.
 
-## Status, stated plainly
+## What it does
 
-The model is **real but modest**. It beats both a linear baseline and the
-training mean on a held-out season it never saw, but it does not clear the
-pre-registered 15% gate.
+Given a circuit, a compound, track and air temperature, and the tyre's age at
+the start of a stint, the model estimates a degradation rate. A simulator then
+projects lap times across a race distance, enumerates one- and two-stop plans
+under the mandatory two-compound rule, and returns the fastest with its pit
+window.
 
-| Model | Holdout MAE (s/lap) | R² |
+```python
+from src.core.pipeline import F1Pipeline
+
+pipeline = F1Pipeline().load()
+result = pipeline.predict_strategy({
+    "season": 2024, "circuit": "silverstone", "driver": "NOR",
+    "laps": 52, "air_temp": 20, "track_temp": 32,
+    "conditions": "dry", "compounds": ["SOFT", "MEDIUM", "HARD"],
+})
+
+result["best_strategy"]["label"]      # '1-stop: SOFT-MEDIUM'
+result["best_strategy"]["pit_laps"]   # [22]
+result["confidence"]["level"]         # 'high'
+```
+
+Every prediction carries its provenance. Where enough stints have been observed
+at that circuit and compound, the empirical value is used; where they have not,
+the model fills the gap and the response says so.
+
+## Results
+
+Trained on 2022-2023, evaluated on a held-out 2024 season.
+
+| Model | Holdout MAE (s/lap) | R2 |
 |---|---|---|
-| Mean predictor | 0.03539 | — |
+| Mean predictor | 0.03539 | - |
 | Linear baseline | 0.03337 | +0.044 |
-| **XGBoost (tuned)** | **0.03345** | **+0.097** |
+| XGBoost (tuned) | 0.03345 | +0.097 |
 
-Trained on 2022-2023, held out on 2024. 74.4% of predictions land within
-0.05 s/lap.
+The tuned model beats the mean predictor and matches the linear baseline on
+absolute error while roughly doubling its R2. **It does not clear the
+pre-registered acceptance gate of a 15% MAE improvement over the baseline; the
+measured figure is -0.2%.**
 
-**Gate 4 fails, at −0.2% against a 15% threshold** — the tuned tree is level
-with the linear baseline rather than ahead of it. That is informative rather
-than merely disappointing: once the target's construction bias is removed, the
-relationship between circuit severity and degradation is close to linear, so
-gradient boosting's extra flexibility buys almost nothing. XGBoost does hold a
-better R² (+0.097 against +0.044), meaning it handles the tails better while
-matching on average error.
+That gate was set before anyone established how much headroom the problem has.
+Predicting each stint's own event-and-compound mean, which requires knowing the
+answer in advance, improves on the global mean by only 38%. Just under half of
+degradation variance sits between events; the rest separates stints within a
+single race, where traffic, fuel saving and driver management dominate and no
+circuit-level feature can reach.
 
-The 15% threshold was fixed before anyone measured the available headroom. The
-oracle ceiling — predicting each stint's own event-and-compound mean, which
-requires knowing the answer in advance — is 38.0%. The model captures 14.4% of
-that. Just under half of degradation variance lies between events; the rest
-separates stints at the same race, where no event-level feature can reach.
+Directional checks against known race strategy pass: Monaco, Monza, Spa,
+Singapore, Jeddah and Silverstone come out one-stop; Bahrain, Suzuka, Barcelona
+and Hungaroring two-stop.
 
-The per-circuit degradation estimates underneath the model are stronger than
-the model itself: they correlate 0.66-0.71 season to season. The strategy layer
-therefore prefers observed data where it exists and uses the model only to fill
-gaps, recording which is which.
+## How stints are selected
 
-## What is not modelled
+The most transferable finding here is a defect in the standard method.
 
-- Wet and intermediate running. Those stints are excluded from the target fit.
-- The non-linear degradation cliff. Degradation is linear in tyre age here, so
-  projections far beyond observed stint lengths are extrapolation and are
-  flagged as such.
-- Anything outside 2022-2024. Requests beyond it are flagged, not extrapolated.
-- Within-event variation. Roughly half the variance separates stints at the
-  same race — traffic, fuel saving, driver management — and none of it is
-  reachable from circuit-level features.
-
-## A bias worth knowing about
-
-Stints are accepted by the **precision** of the fitted slope, not by the
-strength of its correlation. The compass design filtered on `|r| >= 0.3`,
-which measures against this data as a slope-magnitude filter in disguise:
+Per-stint degradation is normally taken as the slope of fuel-corrected lap time
+against tyre age, keeping only stints whose fit clears a correlation threshold
+such as `|r| >= 0.3`. That threshold is described as a fit-quality filter. It is
+not. Measured across 2,815 dry stints:
 
 ```
-corr(|r|, |slope|) = +0.53      corr(|r|, stderr) = -0.20
+corr(|r|, |slope|)  = +0.53      corr(|r|, stderr) = -0.20
 ```
 
-Its pass rate ran from 29.5% for near-zero slopes to 98.7% for large ones, so
-it systematically deleted the low-degradation circuits. Monaco was the clearest
-casualty: its stints are measured *more* precisely than average (slope standard
-error 0.0062 against 0.0152) and were discarded for being flat. Replacing the
-criterion raised between-event variance from 32.3% to 49.7% and fixed every
-remaining directional error in the simulator.
+It tracks how *large* the degradation is roughly three times more strongly than
+how *well* it was measured, because `r` tends to zero as the slope does,
+independently of the residual scatter. A genuinely flat stint cannot clear the
+threshold however precisely it is measured.
+
+| Slope magnitude (s/lap) | Stints | Accepted by \|r\| >= 0.3 |
+|---|---|---|
+| 0.00-0.02 | 505 | **29.5%** |
+| 0.02-0.05 | 653 | 86.2% |
+| 0.05-0.10 | 935 | 98.7% |
+| 0.10-0.20 | 541 | 99.8% |
+
+Monaco is the clearest casualty: its stints are measured *more* precisely than
+average (median slope standard error 0.0062 against 0.0152 elsewhere) and were
+being discarded for being flat.
+
+This model instead accepts a stint when the standard error of its fitted slope
+is at most 0.02 s/lap, small against a typical degradation of 0.065 s/lap. The
+lower plausibility bound is -0.05 s/lap rather than zero, because a circuit with
+no measurable degradation scatters either side of zero and truncating at zero
+keeps only the positive half of that noise.
+
+Per-circuit degradation then correlates 0.64 to 0.74 between seasons, against
+0.18 under the correlation filter.
 
 ## Pipeline
 
 ```
-scripts/probe_api_cost.py      measure API cost before spending budget
-scripts/run_collect_laps.py    collect races, one parquet per session
-scripts/run_build_dataset.py   validate, fuel-correct, build the stint table
-scripts/run_cwi_study.py       the pre-registered Spearman target study
-scripts/run_diagnostics.py     variance decomposition and the oracle ceiling
-scripts/run_train.py           train, evaluate, report the gates
-scripts/run_export_ui.py       export model parameters for the front end
+scripts/probe_api_cost.py         measure API cost before spending budget
+scripts/run_collect_laps.py       collect races, one parquet per session
+scripts/run_build_dataset.py      validate, fuel-correct, build the stint table
+scripts/run_cwi_study.py          pre-registered Spearman study on the target
+scripts/run_diagnostics.py        variance decomposition and the oracle ceiling
+scripts/run_collect_telemetry.py  per-lap physics aggregates from telemetry
+scripts/run_telemetry_study.py    curvature proxy against the speed-trap proxy
+scripts/run_train.py              train, evaluate, report the gates
+scripts/run_fit_diagnostics.py    over/under-fitting evidence
+scripts/run_export_ui.py          export model parameters for the front end
 ```
 
-Collection is resumable: re-run the same command. 68 sessions across three
-seasons collect in roughly 10 minutes of runtime against a 500 requests/hour
-limit, and every subsequent run is free because cache hits bypass the limiter.
+Collection is resumable: re-run the same command. Each session is written to its
+own parquet through a temporary file and an atomic rename, so an interruption
+costs one session rather than the corpus. Rate limiting is detected by exception
+type and stops the run cleanly.
 
-## Results of the pre-registered decisions
+68 race sessions take about 10 minutes of network time against a 500
+requests/hour limit. Cache hits bypass the limiter entirely, so every subsequent
+run is free.
 
-- **CWI Spearman study**: ρ = −0.089, below the 0.2 threshold, so the energy
-  proxy was demoted to a feature and the target reduced to the fuel-corrected
-  degradation slope. Telemetry left the critical path as a result.
-- **Target reliability**: split-half 0.92 Pearson / 0.79 Spearman. The target
-  is measured reliably; the difficulty is transferring across events, not
-  measuring within them.
-- **Cross-season circuit stability**: 0.74 for 2022 vs 2023, 0.64 for 2023 vs
-  2024. Per-circuit degradation persists well enough that the strategy layer
-  prefers observed values over model predictions wherever they exist.
-- **LSTM**: not built. On a ~2,000-row per-stint tabular target there is no
-  sequence axis left, and the gate would not be met.
+Tuned hyperparameters persist to `config/tuned_params.json` and are reloaded by
+default, guarded against a stale feature set.
+
+## Design decisions
+
+**Fuel correction is applied before any slope is fitted.** Fuel remaining on lap
+N of an L-lap race is `110 - (N-1) * 110/L` kilograms, at 0.032 s/kg. Without
+it, the target measures fuel burn rather than tyre wear.
+
+**Features must be knowable before the stint runs**, since the simulator's job is
+to choose stint length. Stint length and clean-lap count are excluded as
+reverse-causal.
+
+**Validation splits on whole events.** Splitting rows lets one race contribute
+stints to both sides of a fold boundary, leaking shared track, weather and
+safety-car conditions.
+
+**Runs on CPU.** The stint table is ~1,700 rows; `device='cuda'` is measurably
+slower than `tree_method='hist'` on CPU at this size (27.5 ms against 139.6 ms),
+because transfer overhead dominates. GPU only wins above roughly 200k rows.
+
+## Scope
+
+- Dry running only. Wet and intermediate stints are excluded from the target fit
+  and requests return a `dry_model_only` flag.
+- Degradation is linear in tyre age. The non-linear cliff beyond a tyre's
+  working range is not modelled, and projections past observed stint lengths are
+  flagged as extrapolation.
+- 2022-2024 only. Requests outside that range are flagged, not extrapolated.
+- Absolute Pirelli C-numbers are confirmed for a minority of rounds;
+  `compound_relative` carries the load elsewhere.
+- Residuals drift -0.26 across the holdout season, so the model is well fitted
+  but not uniformly calibrated within a year.
 
 ## Setup
 
-Python 3.12 in `.venv`. See `requirements.lock.txt` for the working versions
-and `CLAUDE.md` for the rules on not disturbing them.
+Python 3.12. See `requirements.lock.txt` for the working versions and
+`CLAUDE.md` for the conventions this repository follows.
 
-Historical documents in `docs/` and `archive/legacy_2025/` describe the
-superseded design. They are kept for reference and are not accurate
-descriptions of this code.
+```bash
+python -m venv .venv && .venv/Scripts/activate
+pip install -r requirements.txt
+python scripts/probe_api_cost.py
+python scripts/run_collect_laps.py --year 2023
+python scripts/run_build_dataset.py && python scripts/run_train.py
+```
+
+Full measurements and the reasoning behind each decision are in
+[docs/FINDINGS.md](docs/FINDINGS.md). The write-up is in
+[docs/report/](docs/report/).
