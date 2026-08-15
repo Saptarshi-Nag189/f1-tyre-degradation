@@ -31,6 +31,41 @@ Every prediction carries its provenance. Where enough stints have been observed
 at that circuit and compound, the empirical value is used; where they have not,
 the model fills the gap and the response says so.
 
+## Running it as a service
+
+```bash
+python scripts/run_service.py
+```
+
+```
+GET  /health    liveness
+GET  /ready     readiness, separate because loading the model takes seconds
+GET  /meta      model card, including the acceptance gate it fails
+GET  /circuits  what /predict accepts, and the evidence behind each
+POST /predict   strategy prediction
+```
+
+```bash
+curl -s localhost:8000/predict -H 'Content-Type: application/json' \
+  -d '{"circuit":"silverstone","season":2024,"laps":52,"track_temp":32}'
+```
+
+Only `circuit` is required. A request the simulator cannot represent is a 400
+naming the field and the allowed values. A request outside the model's
+evidence but still answerable is a 200 carrying a flag, because the response
+already reports how much of the answer rests on observed data and refusing to
+answer would hide that rather than expose it. An out-of-scope season, a wet
+race and a thinly-observed compound are all flags, not errors.
+
+The model loads once at start-up. Each request is pure computation over that
+shared state, writing nothing and caching nothing.
+
+`docker compose up --build` runs the same thing in a container. The image is
+serving-only, since collection and training need the FIA timing API and a warm
+cache. **It has not been built or run here** - Docker Desktop would not start
+on the development machine - so treat the container as unverified; what was
+checked is in [docs/FINDINGS.md](docs/FINDINGS.md) §9.4.
+
 ## Results
 
 Trained on 2022-2023, evaluated on a held-out 2024 season.
@@ -108,6 +143,10 @@ scripts/run_telemetry_study.py    curvature proxy against the speed-trap proxy
 scripts/run_train.py              train, evaluate, report the gates
 scripts/run_fit_diagnostics.py    over/under-fitting evidence
 scripts/run_export_ui.py          export model parameters for the front end
+scripts/run_service.py            serve the model over HTTP
+scripts/run_predict_bench.py      per-circuit prediction latency, in process
+scripts/run_simulator_ab.py       interleaved A/B against the old simulator
+scripts/run_load_test.py          throughput and tail latency under load
 ```
 
 Collection is resumable: re-run the same command. Each session is written to its
@@ -139,6 +178,23 @@ safety-car conditions.
 **Runs on CPU.** The stint table is ~1,700 rows; `device='cuda'` is measurably
 slower than `tree_method='hist'` on CPU at this size (27.5 ms against 139.6 ms),
 because transfer overhead dominates. GPU only wins above roughly 200k rows.
+
+**Strategies are ranked arithmetically, not simulated.** Race time splits into
+a part every strategy over the same distance pays alike - base pace, and the
+fuel penalty, which depends on the absolute lap number and so is unchanged by
+where the stops fall - and a part the strategy controls, `n x offset +
+deg x n(n-1)/2` per stint plus the pit loss. Ranking on the second is exact,
+and lap-by-lap traces are built only for the strategy actually returned. With
+near-optimal pruning on top, that is **32x faster** across ten circuits for
+identical answers, checked against exhaustive simulation in
+`tests/test_strategy.py`.
+
+**Throughput scales by process, not by thread.** A prediction is CPU-bound
+Python, so one worker saturates one core: measured throughput is flat from
+concurrency 1 to 16 at about 70 requests/s while latency rises linearly, which
+is a GIL ceiling rather than a resource running out. Three replicas reached
+138 requests/s on a busy 8-core laptop that was also running the load
+generator. Numbers and method in [docs/FINDINGS.md](docs/FINDINGS.md) §9.
 
 ## Scope
 

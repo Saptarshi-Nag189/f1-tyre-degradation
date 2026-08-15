@@ -307,7 +307,161 @@ project should not be described as GPU-accelerated.
 
 ---
 
-## 9. Reproduction
+## 9. Serving
+
+### 9.1 The simulator was doing 30 times more work than it needed to
+
+A prediction searched a few thousand candidate strategies and projected a
+full lap-by-lap time trace for every one, then read exactly one of them.
+
+Race time splits cleanly into a part every strategy over the same distance
+pays alike and a part the strategy controls. Base pace contributes
+`race_laps x base_lap_s`. The fuel penalty is a function of the absolute lap
+number, so summed over a whole race it is identical however the stints fall:
+with `burn = initial / race_laps` it comes to `penalty x initial x
+(race_laps + 1) / 2`. What remains is per stint, `n x offset + deg x n(n-1)/2`,
+plus the pit loss. Quadratic in stint length, which is why stopping can be
+worth twenty-five seconds.
+
+Ranking on that is exact rather than approximate, so nothing is traded away.
+Two further changes follow from it: candidates slower than
+`best + pit_window_slack_s` are discarded unless they are the first of their
+compound sequence, and the pace and compound reference frames are indexed
+into dictionaries once at load rather than filtered per request.
+
+| Circuit | Laps | Searched | Kept | Before | After | Speed-up |
+|---|---|---|---|---|---|---|
+| Silverstone | 52 | 1,830 | 32 | 149.42 ms | 4.18 ms | 35.8x |
+| Monaco | 78 | 1,830 | 30 | 213.22 ms | 5.29 ms | 40.3x |
+| Monza | 53 | 1,830 | 32 | 189.16 ms | 6.47 ms | 29.2x |
+| Spa | 44 | 5,382 | 32 | 541.17 ms | 17.72 ms | 30.5x |
+| Singapore | 62 | 2,484 | 32 | 295.27 ms | 9.30 ms | 31.7x |
+| Jeddah | 50 | 1,620 | 40 | 168.28 ms | 6.07 ms | 27.7x |
+| Bahrain | 57 | 2,148 | 51 | 253.29 ms | 7.93 ms | 31.9x |
+| Suzuka | 53 | 1,830 | 48 | 198.03 ms | 6.41 ms | 30.9x |
+| Barcelona | 66 | 2,538 | 61 | 317.44 ms | 9.61 ms | 33.0x |
+| Hungaroring | 70 | 2,928 | 78 | 378.64 ms | 10.72 ms | 35.3x |
+
+**32.3x over the ten circuits combined**, and the same winning strategy, the
+same pit laps and the same race time to within 1e-6 s everywhere.
+
+Note that latency tracks the number of candidates, not the race length. The
+search grid steps by `race_laps // 25`, so a 44-lap race is searched at
+one-lap resolution and a 78-lap race at three: **Spa is the most expensive
+circuit despite being the shortest race**. That is an accident of integer
+division rather than a decision, and it is left alone because changing the
+grid would change published pit windows.
+
+The measurement method matters here. This is a laptop whose clock varies by a
+factor of three between a cold turbo burst and sustained load - the same
+unchanged benchmark recorded 1.32 ms and 6.13 ms per prediction twenty
+minutes apart. Measuring the old code, then the new code, then subtracting,
+would have measured the thermal state as much as the change.
+`scripts/run_simulator_ab.py` therefore runs both implementations
+**alternately in one process**, reading the old one out of git so it cannot
+drift from what was replaced. Drift then hits both arms equally and cancels
+in the ratio. The absolute milliseconds still depend on machine state and
+should be read as a spread, not a specification.
+
+`tests/test_strategy.py` checks the optimised path against an exhaustive
+lap-by-lap brute force at five race lengths: same winner, and every
+near-optimal strategy retained, so a pit window cannot be silently clipped by
+the pruning rather than by its own criterion.
+
+### 9.2 The HTTP service
+
+`src/service/` puts the model behind an API. The model loads once at
+start-up; every request is pure computation over that shared state, writing
+nothing and caching nothing, so a worker's hundred-thousandth request behaves
+like its first. The one piece of shared state that is not obviously safe is
+the XGBoost booster, which takes a narrow lock during inference; most
+requests never reach it, because a circuit with enough observed stints uses
+the empirical rate.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness |
+| `GET /ready` | Readiness, separate because loading takes seconds |
+| `GET /meta` | Model card, stating the failed gate outright |
+| `GET /circuits` | What `/predict` accepts, and the evidence behind each |
+| `POST /predict` | Strategy prediction |
+
+Validation separates two things that are easy to conflate. A request the
+simulator cannot represent is a **400** naming the field and, where a short
+list exists, the allowed values. A request outside the model's evidence but
+still answerable is a **200 carrying a flag**: an out-of-scope season, a wet
+race, a circuit-compound pair with too few stints. The response already
+reports how much of the answer rests on observed data; refusing to answer
+would hide that judgement rather than expose it.
+
+### 9.3 Throughput and latency
+
+`scripts/run_load_test.py`, closed-loop, requests drawn from all ten circuits
+because per-request cost varies threefold between them. Load generator and
+service share the machine, so these are a floor.
+
+One replica, waitress with 8 threads:
+
+| Concurrency | req/s | p50 | p95 | p99 | Errors |
+|---|---|---|---|---|---|
+| 1 | 66.3 | 13.23 ms | 24.63 ms | 49.81 ms | 0 |
+| 2 | 71.3 | 25.25 ms | 46.58 ms | 113.28 ms | 0 |
+| 4 | 66.2 | 54.44 ms | 124.50 ms | 183.77 ms | 0 |
+| 8 | 67.5 | 125.87 ms | 259.66 ms | 331.93 ms | 0 |
+| 16 | 59.8 | 254.11 ms | 442.74 ms | 544.56 ms | 0 |
+
+**Throughput is flat from concurrency 1 to 16 while latency rises linearly.**
+That is the signature of a single-process GIL ceiling, not of a resource
+running out: a prediction is CPU-bound Python, so one process saturates one
+core no matter how many threads waitress is given, and extra concurrency buys
+queueing rather than work. Threads beyond about two are not useful here.
+
+Scaling is therefore by process. Three replicas:
+
+| Replicas | Peak req/s | p95 at peak |
+|---|---|---|
+| 1 | 71.3 | 46.58 ms |
+| 3 | 138.1 | 398.30 ms |
+
+1.9x rather than 3x, on a busy 8-core laptop that was also running the load
+generator and an assortment of unrelated desktop software. The replicas do
+not contend with each other - they share nothing, each loading its own copy
+of the model - so the sublinearity is the host's. Two load generators driving
+the three replicas together reached the same aggregate as one, which rules
+out the client as the limit.
+
+One expectation that measurement killed: an access log line per prediction
+was assumed to be a throughput tax, since `setup_logging` attaches a file
+handler that writes on the request thread. Measured both ways, 67.1 against
+68.2 requests/s - inside the run-to-run spread. It is off by default because
+a reverse proxy records the same thing, not because it is expensive.
+
+### 9.4 Container
+
+`Dockerfile` builds a serving-only image, roughly 5.4 MB of artefacts on
+`python:3.12-slim`. Collection and training stay on the host.
+
+`requirements-service.txt` is pinned exactly, unlike `requirements.txt` which
+uses lower bounds. Resolving those bounds freshly produced pandas 3.0.5,
+numpy 2.5.2 and xgboost 3.4.1 against the 2.3.3 / 2.3.5 / 3.1.2 the model was
+trained and measured on. It loaded and returned an identical strategy, but
+xgboost warned that a model serialised by an older version should be
+re-exported first, and that warning becomes an error eventually. A joblib
+pickle is only guaranteed to load under the versions that wrote it.
+
+**The image is not built or run here.** Docker Desktop would not start on
+this machine, and nothing that has not been executed is reported as working.
+What was verified instead: the exact file set the Dockerfile copies was
+assembled into a clean directory, a fresh virtual environment was built from
+`requirements-service.txt` alone, and the service was started from that and
+returned byte-identical predictions with no xgboost warning. That covers the
+file list and the dependency list, which are the two things most likely to be
+wrong. It does not cover the base image, the healthcheck, the compose file or
+nginx, and those should be treated as unverified.
+
+---
+
+## 10. Reproduction
 
 ```
 scripts/probe_api_cost.py         measure API cost before spending budget
@@ -319,6 +473,10 @@ scripts/run_collect_telemetry.py  telemetry pilot, per-lap physics aggregates
 scripts/run_telemetry_study.py    curvature proxy against the speed-trap one
 scripts/run_train.py              train, evaluate, report the gates
 scripts/run_export_ui.py          export model parameters for the front end
+scripts/run_service.py            serve the model over HTTP
+scripts/run_predict_bench.py      per-circuit prediction latency, in process
+scripts/run_simulator_ab.py       interleaved A/B against the old simulator
+scripts/run_load_test.py          throughput and tail latency under load
 ```
 
 Collection is resumable: re-run the same command. Tuned hyperparameters
