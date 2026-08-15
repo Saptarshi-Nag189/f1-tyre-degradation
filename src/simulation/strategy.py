@@ -17,6 +17,8 @@ lengths are extrapolation and are flagged as such.
 """
 from __future__ import annotations
 
+import functools
+import itertools
 import logging
 from dataclasses import dataclass, field
 from itertools import product
@@ -54,7 +56,14 @@ class Stint:
 
 @dataclass
 class StrategyResult:
-    """A complete race strategy and its simulated cost."""
+    """A complete race strategy and its simulated cost.
+
+    ``total_time_s``, ``pit_stops`` and ``pit_laps`` are always populated.
+    ``lap_times`` and ``wear`` are the per-lap traces, which cost far more to
+    produce than the total does and are read only for the strategy actually
+    returned; they are empty until :func:`materialise` fills them. Check
+    :attr:`has_traces` rather than testing the lists for emptiness.
+    """
 
     stints: list[Stint]
     total_time_s: float
@@ -62,6 +71,7 @@ class StrategyResult:
     pit_laps: list[int]
     lap_times: list[float] = field(default_factory=list)
     wear: list[float] = field(default_factory=list)
+    has_traces: bool = False
 
     @property
     def label(self) -> str:
@@ -128,7 +138,52 @@ def simulate_strategy(stints: list[Stint], race_laps: int, base_lap_s: float,
     total = sum(lap_times) + pit_loss_s * len(pit_laps)
     return StrategyResult(stints=stints, total_time_s=total,
                           pit_stops=len(pit_laps), pit_laps=pit_laps,
-                          lap_times=lap_times, wear=wear)
+                          lap_times=lap_times, wear=wear, has_traces=True)
+
+
+def fixed_race_cost(race_laps: int, base_lap_s: float, fuel: dict) -> float:
+    """Race time that every strategy over the same distance pays alike.
+
+    Two of the four terms in :func:`simulate_stint` do not depend on how the
+    race is divided into stints:
+
+    - base pace contributes ``race_laps * base_lap_s``;
+    - the fuel penalty is a function of the absolute lap number, so summed over
+      a whole race it is the same however the stints are arranged. With
+      ``burn = initial / race_laps`` the fuel remaining on lap ``l`` is
+      ``initial - l * burn`` for ``l`` in ``0..race_laps-1``, which sums to
+      ``initial * (race_laps + 1) / 2``.
+
+    Splitting them out is what lets :func:`enumerate_strategies` rank
+    candidates without projecting a lap time for each one.
+
+    :param race_laps: scheduled race distance.
+    :param base_lap_s: fuel-corrected reference pace, seconds.
+    :param fuel: ``fuel_correction`` settings section.
+    :returns: seconds common to every strategy over this distance.
+    """
+    initial = fuel["initial_fuel_kg"]
+    penalty = fuel["penalty_s_per_kg"]
+    return race_laps * base_lap_s + penalty * initial * (race_laps + 1) / 2.0
+
+
+def variable_race_cost(stints: list[Stint], pit_loss_s: float) -> float:
+    """The part of race time that the choice of strategy controls.
+
+    A stint of ``n`` laps carries its compound offset on every lap, and its
+    degradation over tyre ages ``0..n-1``, so it costs
+    ``n * offset + deg_rate * n * (n - 1) / 2``. Quadratic in stint length,
+    which is the whole reason stopping can be worth 25 seconds.
+
+    :param stints: the planned stints, in order.
+    :param pit_loss_s: time lost per pit stop.
+    :returns: seconds attributable to this particular strategy.
+    """
+    total = pit_loss_s * (len(stints) - 1)
+    for stint in stints:
+        n = stint.n_laps
+        total += n * stint.base_offset + stint.deg_rate * n * (n - 1) / 2.0
+    return total
 
 
 def _split_laps(race_laps: int, n_stints: int, first: int | None = None
@@ -163,14 +218,64 @@ def _split_laps(race_laps: int, n_stints: int, first: int | None = None
     return partitions
 
 
+def search_strategies(race_laps: int, compounds: list[str], rates: dict,
+                      base_lap_s: float, pit_loss_s: float, fuel: dict
+                      ) -> list[tuple[float, tuple[str, ...], list[int]]]:
+    """Cost every candidate strategy, without building any objects.
+
+    The search space is a few thousand candidates wide and all but a handful
+    are discarded, so this stage works in plain tuples and arithmetic.
+    :func:`enumerate_strategies` turns the survivors into
+    :class:`StrategyResult` objects.
+
+    :param race_laps: scheduled race distance.
+    :param compounds: available dry compounds.
+    :param rates: mapping from compound to ``(deg_rate, base_offset, source)``.
+    :param base_lap_s: fuel-corrected reference pace, seconds.
+    :param pit_loss_s: time lost per pit stop.
+    :param fuel: ``fuel_correction`` settings section.
+    :returns: ``(total_time_s, compound_sequence, stint_lengths)`` tuples,
+        unsorted.
+    """
+    fixed = fixed_race_cost(race_laps, base_lap_s, fuel)
+    candidates: list[tuple[float, tuple[str, ...], list[int]]] = []
+
+    for n_stints in (2, 3):
+        partitions = _split_laps(race_laps, n_stints)
+        if not partitions:
+            continue
+        stop_cost = fixed + pit_loss_s * (n_stints - 1)
+        for sequence in product(compounds, repeat=n_stints):
+            if len(set(sequence)) < 2:
+                continue                      # mandatory two-compound rule
+            # Hoisted out of the partition loop: the compound sequence is
+            # fixed across every split of it.
+            terms = [(rates[c][0], rates[c][1]) for c in sequence]
+            for lengths in partitions:
+                total = stop_cost
+                for (deg, offset), n in zip(terms, lengths):
+                    total += n * offset + deg * n * (n - 1) / 2.0
+                candidates.append((total, sequence, lengths))
+
+    return candidates
+
+
 def enumerate_strategies(race_laps: int, compounds: list[str],
                          deg_lookup, base_lap_s: float, pit_loss_s: float,
-                         fuel: dict, max_observed_stint: dict | None = None
+                         fuel: dict, max_observed_stint: dict | None = None,
+                         near_optimal_slack_s: float = 1.0
                          ) -> list[StrategyResult]:
-    """Enumerate and simulate one-stop and two-stop strategies.
+    """Rank one-stop and two-stop strategies, best first.
 
     Enforces the mandatory two-compound rule: a dry race must use at least two
     distinct compounds.
+
+    Only strategies a caller can actually use are returned: those within
+    ``near_optimal_slack_s`` of the best, which is what a pit window is drawn
+    from, plus the best example of every distinct compound sequence, which is
+    what the alternatives list is drawn from. A 44-lap race generates over
+    5,000 candidates and fewer than a hundred survive this, so the rest are
+    never built.
 
     :param race_laps: scheduled race distance.
     :param compounds: available dry compounds.
@@ -180,33 +285,99 @@ def enumerate_strategies(race_laps: int, compounds: list[str],
     :param fuel: ``fuel_correction`` settings section.
     :param max_observed_stint: longest observed stint per compound, for
         flagging extrapolation.
-    :returns: simulated strategies, best first.
+    :param near_optimal_slack_s: keep every strategy within this many seconds
+        of the best. Must be at least the slack the caller uses to draw pit
+        windows, or the window will be clipped.
+    :returns: ranked strategies, best first. Only the best carries per-lap
+        traces; see :class:`StrategyResult` and :func:`materialise`.
     """
     max_observed = max_observed_stint or {}
-    results: list[StrategyResult] = []
+    rates = {c: deg_lookup(c) for c in compounds}
 
-    for n_stints in (2, 3):
-        for sequence in product(compounds, repeat=n_stints):
-            if len(set(sequence)) < 2:
-                continue                      # mandatory two-compound rule
-            for lengths in _split_laps(race_laps, n_stints):
-                stints, start = [], 1
-                for compound, length in zip(sequence, lengths):
-                    deg, offset, _ = deg_lookup(compound)
-                    limit = max_observed.get(compound)
-                    stints.append(Stint(
-                        compound=compound, start_lap=start, n_laps=length,
-                        deg_rate=deg, base_offset=offset,
-                        extrapolated=bool(limit and length > limit)))
-                    start += length
-                results.append(simulate_strategy(
-                    stints, race_laps, base_lap_s, pit_loss_s, fuel))
+    candidates = search_strategies(race_laps, compounds, rates, base_lap_s,
+                                   pit_loss_s, fuel)
+    if not candidates:
+        logger.info("No feasible strategy over %d laps", race_laps)
+        return []
 
-    results.sort(key=lambda r: r.total_time_s)
-    logger.info("Simulated %d strategies; best %s at %.1f s",
-                len(results), results[0].label if results else "none",
-                results[0].total_time_s if results else float("nan"))
+    candidates.sort(key=lambda c: c[0])
+    cutoff = candidates[0][0] + near_optimal_slack_s
+    n_shapes = len(_all_shapes(tuple(compounds)))
+
+    kept: list[tuple[float, tuple[str, ...], list[int]]] = []
+    seen_shapes: set[tuple[str, ...]] = set()
+    for candidate in candidates:
+        total, sequence, _ = candidate
+        if total > cutoff:
+            if sequence in seen_shapes:
+                # Sorted, so everything after this is both slower and of an
+                # already-represented shape once every shape has appeared.
+                if len(seen_shapes) == n_shapes:
+                    break
+                continue
+        kept.append(candidate)
+        seen_shapes.add(sequence)
+
+    results = [_build(total, sequence, lengths, rates, max_observed)
+               for total, sequence, lengths in kept]
+    results[0] = materialise(results[0], race_laps, base_lap_s, pit_loss_s, fuel)
+
+    logger.info("Ranked %d candidates, kept %d; best %s at %.1f s",
+                len(candidates), len(results), results[0].label,
+                results[0].total_time_s)
     return results
+
+
+@functools.lru_cache(maxsize=8)
+def _all_shapes(compounds: tuple[str, ...]) -> frozenset:
+    """Every compound sequence the two-compound rule admits."""
+    return frozenset(
+        sequence
+        for n in (2, 3)
+        for sequence in product(compounds, repeat=n)
+        if len(set(sequence)) >= 2)
+
+
+def _build(total_time_s: float, sequence: tuple[str, ...], lengths: list[int],
+           rates: dict, max_observed: dict) -> StrategyResult:
+    """Turn a costed candidate into a :class:`StrategyResult`.
+
+    :param total_time_s: race time from :func:`search_strategies`.
+    :param sequence: compounds in stint order.
+    :param lengths: stint lengths in laps.
+    :param rates: mapping from compound to ``(deg_rate, base_offset, source)``.
+    :param max_observed: longest observed stint per compound.
+    :returns: the assembled strategy, without per-lap traces.
+    """
+    stints, start = [], 1
+    for compound, length in zip(sequence, lengths):
+        deg, offset, _ = rates[compound]
+        limit = max_observed.get(compound)
+        stints.append(Stint(
+            compound=compound, start_lap=start, n_laps=length,
+            deg_rate=deg, base_offset=offset,
+            extrapolated=bool(limit and length > limit)))
+        start += length
+    pit_laps = list(itertools.accumulate(lengths))[:-1]
+    return StrategyResult(stints=stints, total_time_s=total_time_s,
+                          pit_stops=len(pit_laps), pit_laps=pit_laps)
+
+
+def materialise(result: StrategyResult, race_laps: int, base_lap_s: float,
+                pit_loss_s: float, fuel: dict) -> StrategyResult:
+    """Fill in the per-lap traces for a ranked strategy.
+
+    :param result: a strategy from :func:`enumerate_strategies`.
+    :param race_laps: scheduled race distance.
+    :param base_lap_s: fuel-corrected reference pace, seconds.
+    :param pit_loss_s: time lost per pit stop.
+    :param fuel: ``fuel_correction`` settings section.
+    :returns: the equivalent strategy with ``lap_times`` and ``wear`` filled.
+    """
+    if result.has_traces:
+        return result
+    return simulate_strategy(result.stints, race_laps, base_lap_s,
+                             pit_loss_s, fuel)
 
 
 def dedupe_by_shape(results: list[StrategyResult], limit: int = 4

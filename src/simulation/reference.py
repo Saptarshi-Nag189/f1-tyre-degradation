@@ -94,4 +94,44 @@ def build_reference(laps: pd.DataFrame, stints: pd.DataFrame) -> dict:
         "compounds": ref,
         "seasons": sorted(int(y) for y in stints["Year"].unique()),
         "n_stints": int(len(stints)),
+        "pace_index": index_pace(pace),
+        "compound_index": index_compounds(ref),
+    }
+
+
+def index_pace(pace: pd.DataFrame) -> dict[str, dict]:
+    """Index the pace table by event name.
+
+    Serving a prediction needs one row of this table. Filtering the frame per
+    request costs more than the strategy search it feeds, and the table does
+    not change between requests, so it is indexed once when the model loads.
+
+    :param pace: frame from :func:`base_pace_by_event`, one row per event.
+    :returns: mapping from event name to plain Python scalars.
+    """
+    return {
+        str(row.EventName): {
+            "base_lap_s": float(row.base_lap_s),
+            "race_laps": int(row.race_laps),
+        }
+        for row in pace.itertuples(index=False)
+    }
+
+
+def index_compounds(ref: pd.DataFrame) -> dict[tuple[str, str], dict]:
+    """Index the compound reference by (event name, compound).
+
+    :param ref: frame from :func:`compound_reference`.
+    :returns: mapping from (event, compound) to plain Python scalars.
+    """
+    return {
+        (str(row.EventName), str(row.Compound)): {
+            "deg_rate_median": float(row.deg_rate_median),
+            "deg_rate_q25": float(row.deg_rate_q25),
+            "deg_rate_q75": float(row.deg_rate_q75),
+            "n_stints": int(row.n_stints),
+            "mean_stint_length": float(row.mean_stint_length),
+            "reliable": bool(row.reliable),
+        }
+        for row in ref.itertuples(index=False)
     }

@@ -220,12 +220,11 @@ class F1Pipeline:
                          "is offered")
 
         # --- circuit pace and race length ---
-        pace = self.reference["pace"]
-        row = pace[pace["EventName"] == event_name]
-        if row.empty:
+        pace = self.reference["pace_index"].get(event_name)
+        if pace is None:
             raise ValueError(f"No collected data for {event_name}")
-        base_lap_s = float(row["base_lap_s"].iloc[0])
-        race_laps = int(params.get("laps") or row["race_laps"].iloc[0])
+        base_lap_s = pace["base_lap_s"]
+        race_laps = int(params.get("laps") or pace["race_laps"])
 
         # --- degradation per compound ---
         requested = [c.upper() for c in params.get("compounds", strat.DRY_COMPOUNDS)]
@@ -248,10 +247,11 @@ class F1Pipeline:
 
         # --- simulate ---
         settings = self.config
+        slack = settings["strategy"]["pit_window_slack_s"]
         results = strat.enumerate_strategies(
             race_laps, compounds, lookup, base_lap_s,
             settings["strategy"]["pit_loss_s"], settings["fuel_correction"],
-            max_observed_stint=max_observed)
+            max_observed_stint=max_observed, near_optimal_slack_s=slack)
         if not results:
             raise ValueError("No feasible strategy for the given parameters")
 
@@ -266,7 +266,7 @@ class F1Pipeline:
                 s.compound: [round(s.deg_rate * age, 4) for age in range(s.n_laps)]
                 for s in best.stints},
             "lap_times": [round(t, 3) for t in best.lap_times],
-            "pit_windows": self._pit_windows(results, best),
+            "pit_windows": self._pit_windows(results, best, slack),
             "degradation": {c: round(v["deg_rate"], 5) for c, v in deg_table.items()},
             "flags": flags,
         }
@@ -282,26 +282,25 @@ class F1Pipeline:
         correlates 0.66-0.71 across seasons, whereas the model captures only
         19% of the achievable headroom. The model fills genuine gaps.
         """
-        ref = self.reference["compounds"]
-        subset = ref[ref["EventName"] == event_name]
+        index = self.reference["compound_index"]
 
         table: dict[str, dict] = {}
         max_observed: dict[str, float] = {}
 
         for compound in compounds:
-            match = subset[subset["Compound"] == compound]
-            if not match.empty and bool(match["reliable"].iloc[0]):
+            match = index.get((event_name, compound))
+            if match is not None and match["reliable"]:
                 table[compound] = {
-                    "deg_rate": float(match["deg_rate_median"].iloc[0]),
-                    "q25": float(match["deg_rate_q25"].iloc[0]),
-                    "q75": float(match["deg_rate_q75"].iloc[0]),
-                    "n_stints": int(match["n_stints"].iloc[0]),
+                    "deg_rate": match["deg_rate_median"],
+                    "q25": match["deg_rate_q25"],
+                    "q75": match["deg_rate_q75"],
+                    "n_stints": match["n_stints"],
                     "source": "observed",
                 }
-                max_observed[compound] = float(match["mean_stint_length"].iloc[0]) * 1.5
+                max_observed[compound] = match["mean_stint_length"] * 1.5
             else:
                 predicted = self._predict_deg_rate(event_name, compound, params)
-                n = int(match["n_stints"].iloc[0]) if not match.empty else 0
+                n = match["n_stints"] if match is not None else 0
                 table[compound] = {
                     "deg_rate": predicted, "q25": predicted * 0.6,
                     "q75": predicted * 1.4, "n_stints": n, "source": "model",
@@ -354,12 +353,19 @@ class F1Pipeline:
                        for s in result.stints],
         }
 
-    def _pit_windows(self, results: list, best) -> list[dict]:
-        """Pit-lap ranges that stay within one second of the best strategy."""
+    def _pit_windows(self, results: list, best, slack_s: float) -> list[dict]:
+        """Pit-lap ranges that stay within ``slack_s`` of the best strategy.
+
+        :param results: ranked strategies from ``enumerate_strategies``.
+        :param best: the chosen strategy.
+        :param slack_s: acceptable loss against the optimum, in seconds. Must
+            match the slack the search was pruned with.
+        :returns: one window per stop.
+        """
         shape = tuple(s.compound for s in best.stints)
         same = [r for r in results
                 if tuple(s.compound for s in r.stints) == shape
-                and r.total_time_s <= best.total_time_s + 1.0]
+                and r.total_time_s <= best.total_time_s + slack_s]
         windows = []
         for position in range(len(best.pit_laps)):
             laps = sorted({r.pit_laps[position] for r in same

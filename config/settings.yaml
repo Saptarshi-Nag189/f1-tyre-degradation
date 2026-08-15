@@ -54,6 +54,13 @@ physics:
 
 strategy:
   pit_loss_s: 25.0            # typical pit-lane time loss 20-25 s
+  # A pit window is the range of stop laps that costs no more than this much
+  # against the optimum. It is also the pruning threshold in the strategy
+  # search: candidates slower than best + this are discarded unless they are
+  # the first example of their compound sequence. The two must be the same
+  # number, or the window would be clipped by the search rather than by the
+  # criterion, so it is defined once here.
+  pit_window_slack_s: 1.0
 
 clean_lap:
   stint_median_multiplier: 1.07   # exclude laps > 107% of stint median
