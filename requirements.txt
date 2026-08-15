@@ -2,6 +2,10 @@
 #
 # Python 3.12. Every package below is imported by src/, scripts/ or tests/.
 #
+# This is the development environment: collection, training, analysis and the
+# service. To run only the service, use requirements-service.txt, which is
+# narrower and pinned exactly rather than lower-bounded.
+#
 # torch is deliberately absent. Nothing on the critical path uses it: the model
 # is XGBoost over roughly 1,700 rows, a size at which CPU beats CUDA by a wide
 # margin. See the "Runs on CPU" note in README.md.
@@ -20,6 +24,11 @@ scikit-learn>=1.5.0
 xgboost>=3.0.0
 optuna>=4.0.0            # hyperparameter search
 joblib>=1.4.0            # model serialisation
+
+# Service
+flask>=3.0
+waitress>=3.0            # WSGI server; identical on Windows and Linux
+requests>=2.32.0         # load generator only, not the service itself
 
 # Plots
 matplotlib>=3.9.0

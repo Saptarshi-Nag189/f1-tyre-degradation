@@ -27,6 +27,21 @@
 - **Detect rate limiting by exception type**, never by message text. FastF1
   swallows `RateLimitExceededError` internally and surfaces
   `DataNotLoadedError`, so a string match can never fire.
+- **Never time a change by running the old code, then the new code.** This
+  machine's clock varies threefold between a cold turbo burst and sustained
+  load; the same unchanged benchmark recorded 1.32 ms and 6.13 ms twenty
+  minutes apart. Run both arms **alternately in one process**, as
+  `scripts/run_simulator_ab.py` does, and report the ratio. Absolute
+  milliseconds are a spread, never a specification.
+- **The strategy search prunes on the same slack the pit window uses.**
+  `strategy.pit_window_slack_s` is read by both. Prune tighter than the window
+  and the window is silently clipped by the search rather than by its own
+  criterion. Changing `_split_laps` changes published pit windows.
+- **Pin the serving image's dependencies exactly.** The artefact is a joblib
+  pickle of an `XGBRegressor`, and a pickle is only guaranteed to load under
+  the versions that wrote it. Resolving `requirements.txt`'s lower bounds
+  freshly gave pandas 3.0.5 against the trained-on 2.3.3, and xgboost warned
+  that the model should be re-exported first.
 
 ## Data contract
 
