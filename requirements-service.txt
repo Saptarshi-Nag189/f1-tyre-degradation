@@ -1,0 +1,34 @@
+# Runtime dependencies for the HTTP service only.
+#
+# Deliberately narrower than requirements.txt, which covers collection,
+# training and analysis. The container serves a model that has already been
+# trained, so it needs none of that: no fastf1 (the FIA timing client), no
+# optuna, no matplotlib, no scipy, no pytest.
+#
+# xgboost is required even though nothing here trains anything: the saved
+# artefact is an XGBRegressor and unpickling it needs the class. scikit-learn
+# is not, despite the model using the sklearn API, because XGBRegressor is
+# defined in xgboost itself.
+#
+# Pinned exactly, unlike requirements.txt, which uses lower bounds. The
+# artefact is a joblib pickle of an XGBRegressor, and a pickle is only
+# guaranteed to load under the library versions that wrote it. Resolving
+# these ranges freshly in November 2026 produced pandas 3.0.5, numpy 2.5.2
+# and xgboost 3.4.1 against the 2.3.3 / 2.3.5 / 3.1.2 the model was trained
+# and measured on. It happened to load and to return an identical strategy,
+# but xgboost warned that a model serialised by an older version should be
+# re-exported first, and that warning becomes an error eventually. A serving
+# image should not be discovering this on a deploy.
+#
+# Bump these deliberately: change a pin, run the test suite, retrain if the
+# warning appears.
+
+flask==3.1.3
+waitress==3.0.2          # WSGI server; identical on Windows and Linux
+
+numpy==2.3.5
+pandas==2.3.3
+pyarrow==25.0.0          # parquet engine for the reference tables
+pyyaml==6.0.3
+joblib==1.5.2            # model deserialisation
+xgboost==3.1.2

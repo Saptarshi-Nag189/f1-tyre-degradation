@@ -1,0 +1,46 @@
+# The build context is deliberately small. Without this the FastF1 cache
+# alone (gigabytes of session data) would be uploaded to the daemon on every
+# build, and the venv holds a CUDA torch build that has no business in a
+# serving image.
+
+.venv/
+cache/
+logs/
+results/
+archive/
+docs/
+tests/
+user_ui/
+
+# Raw session parquet files. The service reads only data/processed/, which
+# the Dockerfile copies explicitly.
+data/raw/
+
+# Reports and figures; the model artefact itself is copied explicitly.
+artifacts/reports/
+
+.git/
+.gitignore
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Collection and training entry points do not ship in a serving image.
+scripts/probe_api_cost.py
+scripts/run_collect_*.py
+scripts/run_build_dataset.py
+scripts/run_train.py
+scripts/run_cwi_study.py
+scripts/run_diagnostics.py
+scripts/run_telemetry_study.py
+scripts/run_fit_diagnostics.py
+scripts/run_export_ui.py
+scripts/run_load_test.py
+scripts/run_predict_bench.py
+scripts/run_simulator_ab.py
+
+*.md
+!README.md
+requirements.lock.txt

@@ -3,6 +3,10 @@
     .venv\\Scripts\\python.exe scripts/run_service.py
     .venv\\Scripts\\python.exe scripts/run_service.py --port 8080 --threads 4
 
+Settings resolve config file, then ``F1_SERVICE_HOST`` / ``_PORT`` /
+``_THREADS`` / ``_ACCESS_LOG``, then the command line. The environment layer
+is for containers, where the config file is baked in and ``CMD`` is fixed.
+
 Runs through waitress, a production WSGI server that works identically on
 Windows and Linux. Flask's development server is single-threaded, reloads on
 file changes and says so in a warning on every start; it is not used here.
@@ -14,6 +18,7 @@ polling before this process gets that far.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -25,19 +30,50 @@ if str(PROJECT_ROOT) not in sys.path:
 from src import config                                  # noqa: E402
 
 
+def _env(name: str, default, cast=str):
+    """Read a ``F1_SERVICE_*`` override.
+
+    Settings resolve in the order config file, environment, command line, each
+    overriding the last. The environment layer exists for containers, where
+    the config file is baked into the image and the command line is fixed by
+    ``CMD``, so an orchestrator has nothing else to turn.
+
+    :param name: suffix after ``F1_SERVICE_``, e.g. ``"THREADS"``.
+    :param default: value from the config file.
+    :param cast: conversion applied to the raw string.
+    :returns: the resolved value.
+    :raises SystemExit: if the variable is set but unusable, rather than
+        silently falling back and serving a configuration nobody asked for.
+    """
+    raw = os.environ.get(f"F1_SERVICE_{name}")
+    if raw is None:
+        return default
+    if cast is bool:
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        return cast(raw)
+    except ValueError:
+        raise SystemExit(
+            f"F1_SERVICE_{name}={raw!r} is not a valid "
+            f"{cast.__name__}") from None
+
+
 def main() -> int:
     """Load the model and serve it."""
     settings = config.settings()["service"]
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default=settings["host"])
-    parser.add_argument("--port", type=int, default=settings["port"])
-    parser.add_argument("--threads", type=int, default=settings["threads"],
+    parser.add_argument("--host", default=_env("HOST", settings["host"]))
+    parser.add_argument("--port", type=int,
+                        default=_env("PORT", settings["port"], int))
+    parser.add_argument("--threads", type=int,
+                        default=_env("THREADS", settings["threads"], int),
                         help="waitress worker threads")
     parser.add_argument("--access-log", action="store_true",
-                        default=settings["access_log"],
-                        help="log a line per prediction; costs about a third "
-                             "of throughput, see config/settings.yaml")
+                        default=_env("ACCESS_LOG", settings["access_log"],
+                                     bool),
+                        help="log a line per prediction; off by default "
+                             "because a reverse proxy records the same thing")
     args = parser.parse_args()
 
     logger = config.setup_logging("service")

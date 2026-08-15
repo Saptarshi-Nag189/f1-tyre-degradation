@@ -69,8 +69,8 @@ def percentile(sorted_values: list[float], fraction: float) -> float:
 class Worker:
     """One closed-loop client, holding a session so connections are reused."""
 
-    def __init__(self, url: str, requests_list: list[dict], deadline: float,
-                 offset: int) -> None:
+    def __init__(self, url: str | list[str], requests_list: list[dict],
+                 deadline: float, offset: int) -> None:
         self.url = url
         self.payloads = requests_list
         self.deadline = deadline
@@ -81,16 +81,24 @@ class Worker:
         self.status_counts: dict[int, int] = {}
 
     def run(self) -> None:
-        """Send requests until the deadline."""
+        """Send requests until the deadline.
+
+        With several URLs the worker rotates between them, standing in for the
+        round-robin a load balancer would do. Each replica is a separate
+        process with its own copy of the model and no shared state, which is
+        what makes that legitimate.
+        """
+        urls = self.url if isinstance(self.url, list) else [self.url]
         session = requests.Session()
         index = self.offset
         try:
             while time.perf_counter() < self.deadline:
                 payload = self.payloads[index % len(self.payloads)]
+                url = urls[index % len(urls)]
                 index += 1
                 start = time.perf_counter()
                 try:
-                    response = session.post(self.url, json=payload, timeout=30)
+                    response = session.post(url, json=payload, timeout=30)
                 except requests.RequestException:
                     self.errors += 1
                     continue
@@ -110,11 +118,11 @@ class Worker:
             session.close()
 
 
-def run_level(url: str, concurrency: int, duration_s: float,
+def run_level(url: str | list[str], concurrency: int, duration_s: float,
               logger) -> dict:
     """Drive the service at one concurrency level.
 
-    :param url: the predict endpoint.
+    :param url: the predict endpoint, or a list of them across replicas.
     :param concurrency: number of closed-loop workers.
     :param duration_s: measurement window in seconds.
     :param logger: where to report progress.
@@ -197,7 +205,9 @@ def check_service(base_url: str, logger) -> dict:
 def main() -> int:
     """Run the sweep and write the results as JSON."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", default="http://127.0.0.1:8000")
+    parser.add_argument("--url", default="http://127.0.0.1:8000",
+                        help="service base URL, or several comma-separated to "
+                             "measure replicas in aggregate")
     parser.add_argument("--concurrency", default="1,2,4,8,16,32",
                         help="comma-separated levels to sweep")
     parser.add_argument("--duration", type=float, default=10.0,
@@ -208,22 +218,26 @@ def main() -> int:
 
     logger = config.setup_logging("load_test")
     levels = [int(c) for c in args.concurrency.split(",") if c.strip()]
+    bases = [u.strip().rstrip("/") for u in args.url.split(",") if u.strip()]
 
-    ready = check_service(args.url, logger)
-    logger.info("Service ready over %d stints; sweeping %s for %.0f s each",
-                ready.get("stints", 0), levels, args.duration)
+    for base in bases:
+        ready = check_service(base, logger)
+    logger.info("%d replica(s) ready over %d stints; sweeping %s for %.0f s "
+                "each", len(bases), ready.get("stints", 0), levels,
+                args.duration)
 
-    predict_url = f"{args.url}/predict"
+    predict_urls = [f"{base}/predict" for base in bases]
     logger.info("Warming up for %.0f s", args.warmup)
-    run_level(predict_url, 4, args.warmup, logging_noop(logger))
+    run_level(predict_urls, 4, args.warmup, logging_noop(logger))
 
-    results = [run_level(predict_url, c, args.duration, logger)
+    results = [run_level(predict_urls, c, args.duration, logger)
                for c in levels]
 
     peak = max(results, key=lambda r: r["rps"])
     total_errors = sum(r["errors"] for r in results)
     summary = {
-        "url": args.url,
+        "urls": bases,
+        "replicas": len(bases),
         "duration_s_per_level": args.duration,
         "circuits": CIRCUITS,
         "levels": results,
@@ -240,7 +254,9 @@ def main() -> int:
                 peak["rps"], peak["concurrency"], peak["client_p95_ms"],
                 total_errors)
 
-    out = config.resolve_path("reports", create=True) / "load_test.json"
+    suffix = "" if len(bases) == 1 else f"_x{len(bases)}"
+    out = (config.resolve_path("reports", create=True)
+           / f"load_test{suffix}.json")
     out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     logger.info("Wrote %s", out)
     return 0
