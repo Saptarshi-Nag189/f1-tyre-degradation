@@ -184,10 +184,14 @@ a part every strategy over the same distance pays alike - base pace, and the
 fuel penalty, which depends on the absolute lap number and so is unchanged by
 where the stops fall - and a part the strategy controls, `n x offset +
 deg x n(n-1)/2` per stint plus the pit loss. Ranking on the second is exact,
-and lap-by-lap traces are built only for the strategy actually returned. With
-near-optimal pruning on top, that is **32x faster** across ten circuits for
-identical answers, checked against exhaustive simulation in
-`tests/test_strategy.py`.
+and lap-by-lap traces are built only for the strategy actually returned.
+
+That turns the search from `O(candidates x race_laps)` into `O(candidates)`,
+which is a complexity change rather than a tidy-up, and the measurements say
+so: **the new cost per candidate does not depend on race length at all**,
+while the speed-up climbs from 20x over 30 laps to 52x over 100. About 35x
+across the ten real circuits, for answers checked against exhaustive
+simulation in `tests/test_strategy.py`.
 
 **Throughput scales by process, not by thread.** A prediction is CPU-bound
 Python, so one worker saturates one core: measured throughput is flat from

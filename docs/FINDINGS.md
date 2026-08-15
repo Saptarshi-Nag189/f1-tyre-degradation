@@ -342,8 +342,55 @@ into dictionaries once at load rather than filtered per request.
 | Barcelona | 66 | 2,538 | 61 | 317.44 ms | 9.61 ms | 33.0x |
 | Hungaroring | 70 | 2,928 | 78 | 378.64 ms | 10.72 ms | 35.3x |
 
-**32.3x over the ten circuits combined**, and the same winning strategy, the
-same pit laps and the same race time to within 1e-6 s everywhere.
+**Around 35x over the ten circuits combined**, and the same winning strategy,
+the same pit laps and the same race time to within 1e-6 s everywhere. Two
+runs of the same comparison gave 32.3x and 35.4x, which is the run-to-run
+spread on this machine and the reason the figure is quoted loosely.
+
+#### Is that a real improvement, or just a bad first attempt?
+
+The honest position is that the baseline is **the obvious implementation**:
+build each candidate strategy, simulate it lap by lap, keep the best. It is
+what the design called for and what most people would write. But "35x faster
+than my own earlier code" is not evidence of anything on its own, since the
+baseline could simply have been careless.
+
+The distinction that matters is whether this is a complexity change or a
+constant-factor tidy-up, and that is testable. The old cost goes as
+`candidates x race_laps`, because it projects a lap time for every lap of
+every candidate. The new cost goes as `candidates`, plus one materialised
+trace. If that is right, **the speed-up must grow in proportion to race
+length**; a constant-factor improvement would show a flat ratio instead.
+
+Race length swept from 30 to 100 laps, everything else held fixed:
+
+| Race laps | Candidates | Before | After | Speed-up | Old ns per candidate-lap | New ns per candidate |
+|---|---|---|---|---|---|---|
+| 30 | 2,226 | 49.35 ms | 2.47 ms | 20.0x | 738.9 | 1109.2 |
+| 40 | 3,726 | 106.20 ms | 3.45 ms | 30.8x | 712.6 | 925.4 |
+| 50 | 1,620 | 50.31 ms | 1.40 ms | 36.1x | 621.2 | 861.4 |
+| 60 | 2,226 | 76.72 ms | 1.84 ms | 41.6x | 574.4 | 828.4 |
+| 70 | 2,928 | 124.12 ms | 2.58 ms | 48.2x | 605.6 | 880.4 |
+| 80 | 1,614 | 61.11 ms | 1.39 ms | 43.9x | 473.3 | 861.8 |
+| 90 | 2,226 | 104.96 ms | 2.47 ms | 42.5x | 523.9 | 1109.3 |
+| 100 | 1,620 | 78.17 ms | 1.49 ms | 52.3x | 482.5 | 922.2 |
+
+Read the last two columns, not the middle ones. **The new implementation's
+cost per candidate does not depend on race length at all** (median 901 ns,
+spread 0.31, no trend): a 100-lap race costs it what a 30-lap race costs.
+The old implementation's cost per *candidate-lap* is roughly constant
+(median 590 ns, spread 0.45), which is what `candidates x race_laps` means.
+
+Race length x3.33 across the sweep produced speed-up x2.61, and the ratio
+climbs monotonically apart from run-to-run noise. It falls a little short of
+the full x3.33 because the old code also carried a fixed per-candidate cost
+in object construction, so its normalised column drifts down at long races
+rather than staying flat. That is a real effect and it is visible in the
+table rather than smoothed away.
+
+Candidate counts do not rise smoothly with race length, because the search
+grid steps by `race_laps // 25`. They are measured rather than assumed for
+exactly that reason.
 
 Note that latency tracks the number of candidates, not the race length. The
 search grid steps by `race_laps // 25`, so a 44-lap race is searched at
@@ -352,11 +399,13 @@ circuit despite being the shortest race**. That is an accident of integer
 division rather than a decision, and it is left alone because changing the
 grid would change published pit windows.
 
-The measurement method matters here. This is a laptop whose clock varies by a
-factor of three between a cold turbo burst and sustained load - the same
-unchanged benchmark recorded 1.32 ms and 6.13 ms per prediction twenty
-minutes apart. Measuring the old code, then the new code, then subtracting,
-would have measured the thermal state as much as the change.
+#### Method
+
+This is a laptop whose clock varies by a factor of three between a cold turbo
+burst and sustained load - the same unchanged benchmark recorded 1.32 ms and
+6.13 ms per prediction twenty minutes apart. Measuring the old code, then the
+new code, then subtracting, would have measured the thermal state as much as
+the change.
 `scripts/run_simulator_ab.py` therefore runs both implementations
 **alternately in one process**, reading the old one out of git so it cannot
 drift from what was replaced. Drift then hits both arms equally and cancels
