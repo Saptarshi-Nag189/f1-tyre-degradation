@@ -12,6 +12,7 @@ at call time and imported a training script that no longer exists.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -53,6 +54,8 @@ class F1Pipeline:
         self.reference: dict | None = None
         self.metrics: dict | None = None
         self._callback: Optional[Callable] = None
+        # Guards the booster during inference. See _predict_deg_rate.
+        self._predict_lock = threading.Lock()
 
     # --------------------------------------------------------------- training
 
@@ -318,7 +321,15 @@ class F1Pipeline:
 
     def _predict_deg_rate(self, event_name: str, compound: str,
                           params: dict) -> float:
-        """Predict a degradation rate from the trained model."""
+        """Predict a degradation rate from the trained model.
+
+        Serialised on ``_predict_lock``. Everything else in ``predict_strategy``
+        reads immutable state and is safe to run concurrently, but an XGBoost
+        booster keeps internal prediction buffers and is not documented as
+        thread-safe. The lock is narrow on purpose: most requests never reach
+        it, because a circuit with enough observed stints uses the empirical
+        rate and the model is only consulted where the evidence runs out.
+        """
         track = config.track_traits()
         keys = track["event_name_to_key"].get(event_name)
         traits = track["circuits"].get(keys["traits"]) if keys else None
@@ -336,7 +347,9 @@ class F1Pipeline:
             "RaceLaps": float(params.get("laps") or 57),
         }
         row = [values.get(f, 0.0) for f in self.features]
-        prediction = float(self.model.predict(np.array([row], dtype=float))[0])
+        with self._predict_lock:
+            prediction = float(
+                self.model.predict(np.array([row], dtype=float))[0])
         return max(prediction, 0.005)
 
     def _describe(self, result: "strat.StrategyResult", base_lap_s: float) -> dict:

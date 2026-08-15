@@ -62,6 +62,34 @@ strategy:
   # criterion, so it is defined once here.
   pit_window_slack_s: 1.0
 
+service:
+  host: "0.0.0.0"
+  port: 8000
+  # waitress runs a fixed thread pool. A prediction is pure Python arithmetic
+  # and holds the GIL throughout, so threads beyond the core count add queueing
+  # delay without adding throughput. Measured on an 8-core machine, 8 threads
+  # is where requests/sec stops rising; see docs/FINDINGS.md.
+  threads: 8
+  # Requests are rejected outright above this many bytes. A prediction request
+  # is a few hundred bytes; anything larger is not one.
+  max_content_length_bytes: 16384
+  # A log line per prediction. Off by default because a reverse proxy in front
+  # of the service already records this, not because it is expensive: measured
+  # either way, throughput was 67.1 against 68.2 requests/s, which is inside
+  # the run-to-run spread on this machine. Failures are logged regardless.
+  access_log: false
+
+  # Bounds on request fields. Outside these the request is a 400 rather than a
+  # prediction carrying a caveat, because they are outside anything the
+  # simulator can be asked to represent rather than merely outside its
+  # training data. Scope caveats (season, wet running) are flags, not errors.
+  limits:
+    min_race_laps: 5             # below this the two-compound rule is unusable
+    max_race_laps: 200           # the longest scheduled F1 race is 87 laps
+    min_temp_c: -20.0
+    max_temp_c: 80.0             # track temperatures reach the high 50s
+    max_compounds: 3
+
 clean_lap:
   stint_median_multiplier: 1.07   # exclude laps > 107% of stint median
   track_status_ok: "1"            # TrackStatus == '1' means green/all-clear
